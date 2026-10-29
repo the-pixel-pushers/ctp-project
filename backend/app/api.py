@@ -21,7 +21,14 @@ def get_analyzers(request: Request) -> list[Analyzer]:
 
 @router.post("/cull-batch", response_model=CullBatchResponse)
 async def cull_batch(
-    files: Annotated[list[UploadFile], File(description="JPG or PNG images to analyze")],
+    files: Annotated[
+        list[UploadFile],
+        # `format: binary` makes Swagger UI (/docs) render a file picker per item
+        File(
+            description="JPG or PNG images to analyze",
+            json_schema_extra={"items": {"type": "string", "format": "binary"}},
+        ),
+    ],
     analyzers: Annotated[list[Analyzer], Depends(get_analyzers)],
     executor: Annotated[Executor, Depends(get_executor)],
     settings: Annotated[Settings, Depends(get_settings)],
