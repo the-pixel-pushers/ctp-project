@@ -1,15 +1,22 @@
 from concurrent.futures import Executor
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 
 from app.analyzers.base import Analyzer
-from app.api.deps import get_analyzers, get_executor
-from app.core.config import Settings, get_settings
-from app.schemas.cull import CullBatchResponse
-from app.services.batch_processor import process_batch
+from app.config import Settings, get_settings
+from app.processing import process_batch
+from app.schemas import CullBatchResponse
 
-router = APIRouter(tags=["culling"])
+router = APIRouter(prefix="/api/v1", tags=["culling"])
+
+
+def get_executor(request: Request) -> Executor:
+    return request.app.state.executor
+
+
+def get_analyzers(request: Request) -> list[Analyzer]:
+    return request.app.state.analyzers
 
 
 @router.post("/cull-batch", response_model=CullBatchResponse)

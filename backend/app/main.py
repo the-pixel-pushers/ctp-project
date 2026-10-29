@@ -7,8 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.formparsers import MultiPartParser
 
 from app.analyzers.registry import build_analyzers
-from app.api.v1.router import api_router
-from app.core.config import get_settings
+from app.api import router
+from app.config import get_settings
 
 
 def create_app() -> FastAPI:
@@ -34,7 +34,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.include_router(api_router)
+    app.include_router(router)
 
     @app.get("/health", tags=["meta"])
     async def health() -> dict[str, str]:

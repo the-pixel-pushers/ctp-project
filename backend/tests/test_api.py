@@ -1,6 +1,6 @@
 import uuid
 
-from app.core.config import get_settings
+from app.config import get_settings
 from tests.conftest import blurry_image, encode, sharp_image
 
 URL = "/api/v1/cull-batch"

@@ -3,7 +3,7 @@ import pytest
 from app.analyzers.base import AnalysisResult, Analyzer
 from app.analyzers.blur import BlurAnalyzer
 from app.imaging import ImageDecodeError, PreparedImage
-from app.services.pipeline import run_pipeline
+from app.processing import run_pipeline
 from tests.conftest import encode, sharp_image
 
 
