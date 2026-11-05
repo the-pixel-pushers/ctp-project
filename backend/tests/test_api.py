@@ -24,7 +24,7 @@ def test_mixed_batch_isolates_failures(client):
 
     sharp, blurry, corrupt, txt = results
     assert sharp["status"] == "success" and sharp["error"] is None
-    assert sharp["analyses"]["blur"]["flag"] == "ACCEPTABLE"
+    assert sharp["analyses"]["blur"]["flag"] == "SHARP"
 
     blur = blurry["analyses"]["blur"]
     assert blur["status"] == "success" and blur["flag"] == "BLURRY"

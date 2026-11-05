@@ -60,8 +60,11 @@ runs against that proxy, and images are processed concurrently on a shared `Thre
       "filename": "img_01.jpg",
       "status": "success",
       "analyses": {
-        "blur": {"status": "success", "flag": "BLURRY", "score": 0.36,
-                 "metrics": {"laplacian_variance": 45.2}, "error": null}
+        "blur": {"status": "success", "flag": "SHALLOW_FOCUS", "score": 0.97,
+                 "metrics": {"laplacian_variance": 321.8, "subject_sharpness": 2865.6,
+                             "background_sharpness": 2.6, "sharp_area": 0.11,
+                             "focus_ratio": 1097.8, "subject_tiles": 12.0},
+                 "error": null}
       },
       "error": null
     },
@@ -75,8 +78,31 @@ runs against that proxy, and images are processed concurrently on a shared `Thre
 
 ### Blur analyzer
 
-Laplacian variance of the grayscale proxy. `variance < 80` → `BLURRY`, otherwise `ACCEPTABLE`.
-`score = variance / (variance + threshold)`, so the threshold maps to 0.5 and sharp images approach 1.0.
+A single sharpness number for the whole photo would flag portraits with an intentionally
+blurred background, so the analyzer builds a **local sharpness map** instead:
+
+1. Lightly denoise the grayscale proxy (3×3 Gaussian), then take its Laplacian.
+2. Split it into a grid (`grid_cols` = 12 columns, rows follow the aspect ratio). Per tile,
+   sharpness = Laplacian variance, contrast = intensity std dev.
+3. Ignore flat tiles (`contrast < min_tile_contrast`): sky, plain walls and studio backdrops
+   look the same in or out of focus.
+4. A tile is sharp if its sharpness is ≥ `threshold` (80). The largest 8-connected cluster
+   of sharp tiles is the subject, so its position doesn't matter.
+
+| Flag | When |
+|---|---|
+| `SHARP` | At least `sharp_area_ratio` (50%) of the informative tiles are sharp |
+| `SHALLOW_FOCUS` | The subject cluster has ≥ `min_subject_tiles` (2) tiles **and** is ≥ `min_focus_ratio` (4×) sharper than the background median. This is accepted intentional blur. |
+| `BLURRY` | Anything else: camera shake, motion blur, missed focus, isolated sharp specks |
+
+`score = s / (s + threshold)`, where `s` is the subject's mean sharpness, or for `BLURRY` the
+median tile sharpness. The threshold maps to 0.5, and `BLURRY` always scores below 0.5. Images
+too small for the grid, or with no informative tiles, fall back to the old whole-image rule.
+Every knob can be overridden with a `PHOTOSORT_BLUR_*` env var. Use the returned `metrics` to
+tune them on real photos.
+
+Known limitation: the analyzer can't tell *what* is in focus. If focus landed on the background
+and the person is soft, the photo still passes.
 
 ## Adding a new analyzer
 
@@ -92,7 +118,7 @@ Rules for analyzers:
 - **Don't decode or resize.** Use `image.proxy` (BGR) or `image.gray`. If several analyzers need
   another derived view (e.g. HSV), add it as a `cached_property` on `PreparedImage`.
 - **Raise on failure.** The pipeline turns the exception into an error entry for that analyzer only.
-- **`score` is 0.0-1.0, higher = better.** Keep flags uppercase (e.g. `OVEREXPOSED`, `ACCEPTABLE`).
+- **`score` is 0.0-1.0, higher = better.** Keep flags uppercase (e.g. `OVEREXPOSED`, `SHARP`).
 - Keep feature-specific settings in the feature's package, not in `core/config.py`.
 
 ## Configuration
@@ -102,6 +128,12 @@ Override any setting with an environment variable (or a `.env` file):
 | Variable | Default |
 |---|---|
 | `PHOTOSORT_BLUR_THRESHOLD` | `80.0` |
+| `PHOTOSORT_BLUR_GRID_COLS` | `12` |
+| `PHOTOSORT_BLUR_MIN_TILE_CONTRAST` | `6.0` |
+| `PHOTOSORT_BLUR_SHARP_AREA_RATIO` | `0.5` |
+| `PHOTOSORT_BLUR_MIN_SUBJECT_TILES` | `2` |
+| `PHOTOSORT_BLUR_MIN_FOCUS_RATIO` | `4.0` |
+| `PHOTOSORT_BLUR_DENOISE` | `true` |
 | `PHOTOSORT_PROXY_MAX_WIDTH` | `1000` |
 | `PHOTOSORT_MAX_WORKERS` | CPU count |
 | `PHOTOSORT_MAX_FILES_PER_BATCH` | `100` |

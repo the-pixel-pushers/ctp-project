@@ -17,7 +17,7 @@ class ExplodingAnalyzer(Analyzer):
 def test_failing_analyzer_does_not_affect_others():
     outcomes = run_pipeline(encode(sharp_image(), ".png"), [BlurAnalyzer(), ExplodingAnalyzer()], 1000)
     assert outcomes["blur"].status == "success"
-    assert outcomes["blur"].flag == "ACCEPTABLE"
+    assert outcomes["blur"].flag == "SHARP"
     assert outcomes["exploding"].status == "error"
     assert outcomes["exploding"].error
 
