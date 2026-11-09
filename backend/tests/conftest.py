@@ -43,6 +43,18 @@ def bokeh_image(
     return img
 
 
+def solid_image(value: int, width: int = 200, height: int = 150) -> np.ndarray:
+    """Uniform gray image; its luma equals `value`."""
+    return np.full((height, width, 3), value, dtype=np.uint8)
+
+
+def split_image(bright_fraction: float, width: int = 200, height: int = 100) -> np.ndarray:
+    """Left `bright_fraction` of the columns white, the rest black."""
+    img = np.zeros((height, width, 3), dtype=np.uint8)
+    img[:, : round(width * bright_fraction)] = 255
+    return img
+
+
 def encode(img: np.ndarray, ext: str) -> bytes:
     ok, buf = cv2.imencode(ext, img)
     assert ok

@@ -1,7 +1,7 @@
 import uuid
 
 from app.config import get_settings
-from tests.conftest import blurry_image, encode, sharp_image
+from tests.conftest import blurry_image, encode, sharp_image, solid_image
 
 URL = "/api/v1/cull-batch"
 
@@ -35,6 +35,28 @@ def test_mixed_batch_isolates_failures(client):
         assert failed["status"] == "error"
         assert failed["error"]
         assert failed["analyses"] == {}
+
+
+def test_every_analyzer_runs_on_every_image(client):
+    files = [
+        ("files", ("white.png", encode(solid_image(255), ".png"), "image/png")),
+        ("files", ("black.png", encode(solid_image(0), ".png"), "image/png")),
+        ("files", ("sharp.png", encode(sharp_image(), ".png"), "image/png")),
+    ]
+    results = client.post(URL, files=files).json()["results"]
+
+    for result in results:
+        assert set(result["analyses"]) == {"blur", "overexposure", "underexposure"}
+        for analysis in result["analyses"].values():
+            assert analysis["status"] == "success"
+            assert 0.0 <= analysis["score"] <= 1.0
+
+    white, black, sharp = (r["analyses"] for r in results)
+    assert white["overexposure"]["flag"] == "OVEREXPOSED"
+    assert white["underexposure"]["flag"] == "OK"
+    assert black["underexposure"]["flag"] == "UNDEREXPOSED"
+    assert black["overexposure"]["flag"] == "OK"
+    assert sharp["overexposure"]["flag"] == "OK"
 
 
 def test_missing_files_rejected(client):

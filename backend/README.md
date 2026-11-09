@@ -1,6 +1,6 @@
 # PhotoSort Backend
 
-Stateless FastAPI service that scores batches of photos for blur using OpenCV Laplacian variance. Uploads stay in memory and are never written to disk or a database.
+Stateless FastAPI service that scores batches of photos for blur and exposure using OpenCV. Uploads stay in memory and are never written to disk or a database.
 
 ## Setup
 
@@ -34,16 +34,19 @@ curl -F "files=@img_01.jpg" -F "files=@img_02.png" http://localhost:8000/api/v1/
 
 ```
 app/
-  imaging.py            decode + downsample once -> PreparedImage (proxy, cached gray)
+  main.py               app factory, lifespan (thread pool, analyzers), CORS
+  api.py                POST /api/v1/cull-batch (HTTP layer only)
+  processing.py         async upload handling, thread-pool fan-out, per-image pipeline
+  imaging.py            decode + downsample once -> PreparedImage (proxy, cached gray, luma histogram)
+  schemas.py            response models
+  config.py             shared settings (upload limits, workers, CORS)
   analyzers/
     base.py             Analyzer interface + AnalysisResult
     registry.py         the list of enabled analyzers
+    luma.py             helpers shared by the exposure analyzers
     blur/               Laplacian-variance blur detection (+ its own settings)
-  services/
-    pipeline.py         runs every analyzer on one image, isolating failures
-    batch_processor.py  async upload handling, thread-pool fan-out
-  schemas/cull.py       response models
-  api/v1/endpoints/     HTTP layer only
+    overexposure/       blown-highlight detection from the luma histogram
+    underexposure/      crushed-shadow detection from the luma histogram
 ```
 
 Each upload is decoded **once** into a working proxy (max 1000 px wide). Every registered analyzer then
@@ -64,7 +67,15 @@ runs against that proxy, and images are processed concurrently on a shared `Thre
                  "metrics": {"laplacian_variance": 321.8, "subject_sharpness": 2865.6,
                              "background_sharpness": 2.6, "sharp_area": 0.11,
                              "focus_ratio": 1097.8, "subject_tiles": 12.0},
-                 "error": null}
+                 "error": null},
+        "overexposure": {"status": "success", "flag": "OK", "score": 0.87,
+                         "metrics": {"average_brightness": 121.4, "highlight_ratio": 0.0132,
+                                     "shadow_ratio": 0.0041},
+                         "error": null},
+        "underexposure": {"status": "success", "flag": "OK", "score": 0.91,
+                          "metrics": {"average_brightness": 121.4, "highlight_ratio": 0.0132,
+                                      "shadow_ratio": 0.0041},
+                          "error": null}
       },
       "error": null
     },
@@ -104,6 +115,24 @@ tune them on real photos.
 Known limitation: the analyzer can't tell *what* is in focus. If focus landed on the background
 and the person is soft, the photo still passes.
 
+### Exposure analyzers
+
+`overexposure` and `underexposure` read one shared 256-bin luma histogram (Y of YCrCb), computed
+once per image on `PreparedImage.luma_histogram`. Both report the same metrics: `average_brightness`,
+`highlight_ratio` (luma ≥ 250) and `shadow_ratio` (luma ≤ 5).
+
+| Analyzer | Flag | When |
+|---|---|---|
+| `overexposure` | `OVEREXPOSED` | average brightness > 190 **and** highlight ratio > 10% |
+| `underexposure` | `UNDEREXPOSED` | average brightness < 65 **and** shadow ratio > 10% |
+| both | `OK` | anything else |
+
+Both conditions are required, so high-key (snow) and low-key (night) shots that keep their detail
+aren't flagged. `score` is 0.0-1.0 (higher = better): it is `1 - severity`, where severity is the
+smaller of the brightness and clipping severities. Each is 0.5 at its threshold, so flagged photos
+score below 0.5 and the rest score 0.5 or more. The thresholds are experimental; tune them with the
+returned `metrics`.
+
 ## Adding a new analyzer
 
 1. Create `app/analyzers/<name>/` with `analyzer.py`, `settings.py` (a `BaseSettings` with
@@ -119,7 +148,7 @@ Rules for analyzers:
   another derived view (e.g. HSV), add it as a `cached_property` on `PreparedImage`.
 - **Raise on failure.** The pipeline turns the exception into an error entry for that analyzer only.
 - **`score` is 0.0-1.0, higher = better.** Keep flags uppercase (e.g. `OVEREXPOSED`, `SHARP`).
-- Keep feature-specific settings in the feature's package, not in `core/config.py`.
+- Keep feature-specific settings in the feature's package, not in `app/config.py`.
 
 ## Configuration
 
@@ -134,6 +163,12 @@ Override any setting with an environment variable (or a `.env` file):
 | `PHOTOSORT_BLUR_MIN_SUBJECT_TILES` | `2` |
 | `PHOTOSORT_BLUR_MIN_FOCUS_RATIO` | `4.0` |
 | `PHOTOSORT_BLUR_DENOISE` | `true` |
+| `PHOTOSORT_OVEREXPOSURE_BRIGHTNESS_THRESHOLD` | `190.0` |
+| `PHOTOSORT_OVEREXPOSURE_HIGHLIGHT_LEVEL` | `250` |
+| `PHOTOSORT_OVEREXPOSURE_HIGHLIGHT_RATIO` | `0.10` |
+| `PHOTOSORT_UNDEREXPOSURE_BRIGHTNESS_THRESHOLD` | `65.0` |
+| `PHOTOSORT_UNDEREXPOSURE_SHADOW_LEVEL` | `5` |
+| `PHOTOSORT_UNDEREXPOSURE_SHADOW_RATIO` | `0.10` |
 | `PHOTOSORT_PROXY_MAX_WIDTH` | `1000` |
 | `PHOTOSORT_MAX_WORKERS` | CPU count |
 | `PHOTOSORT_MAX_FILES_PER_BATCH` | `100` |

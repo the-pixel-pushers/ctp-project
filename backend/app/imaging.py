@@ -21,6 +21,12 @@ class PreparedImage:
     def gray(self) -> np.ndarray:
         return cv2.cvtColor(self.proxy, cv2.COLOR_BGR2GRAY)
 
+    @cached_property
+    def luma_histogram(self) -> np.ndarray:
+        """256-bin histogram of the Y (luma) channel of YCrCb, shared by the exposure analyzers."""
+        luma = cv2.cvtColor(self.proxy, cv2.COLOR_BGR2YCrCb)[:, :, 0]
+        return np.bincount(luma.ravel(), minlength=256)
+
 
 def decode_image(data: bytes) -> np.ndarray:
     if not data:
