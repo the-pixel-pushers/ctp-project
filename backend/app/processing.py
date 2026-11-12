@@ -50,9 +50,15 @@ def _validate(filename: str, content_type: str | None, size: int, settings: Sett
 
 
 async def _process_one(
-    file: UploadFile, analyzers: Sequence[Analyzer], executor: Executor, settings: Settings
+    file: UploadFile,
+    index: int,
+    client_id: str | None,
+    analyzers: Sequence[Analyzer],
+    executor: Executor,
+    settings: Settings,
 ) -> ImageResult:
     filename = file.filename or "unnamed"
+    ident = {"index": index, "client_id": client_id, "filename": filename}
     try:
         data = await file.read()
         _validate(filename, file.content_type, len(data), settings)
@@ -60,18 +66,26 @@ async def _process_one(
         analyses = await loop.run_in_executor(
             executor, run_pipeline, data, analyzers, settings.proxy_max_width
         )
-        return ImageResult(filename=filename, status="success", analyses=analyses)
+        return ImageResult(**ident, status="success", analyses=analyses)
     except (InvalidUploadError, ImageDecodeError) as exc:
-        return ImageResult(filename=filename, status="error", error=str(exc))
+        return ImageResult(**ident, status="error", error=str(exc))
     except Exception:
         logger.exception("Unexpected failure processing %s", filename)
-        return ImageResult(filename=filename, status="error", error="Internal error while processing image")
+        return ImageResult(**ident, status="error", error="Internal error while processing image")
     finally:
         await file.close()
 
 
 async def process_batch(
-    files: list[UploadFile], analyzers: Sequence[Analyzer], executor: Executor, settings: Settings
+    files: list[UploadFile],
+    analyzers: Sequence[Analyzer],
+    executor: Executor,
+    settings: Settings,
+    client_ids: Sequence[str] | None = None,
 ) -> CullBatchResponse:
-    results = await asyncio.gather(*(_process_one(f, analyzers, executor, settings) for f in files))
+    """`client_ids`, when given, must be parallel to `files`; each ID is echoed on its result."""
+    ids = client_ids if client_ids is not None else [None] * len(files)
+    results = await asyncio.gather(
+        *(_process_one(f, i, ids[i], analyzers, executor, settings) for i, f in enumerate(files))
+    )
     return CullBatchResponse(batch_id=uuid.uuid4(), total_processed=len(results), results=list(results))

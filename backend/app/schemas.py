@@ -15,6 +15,8 @@ class AnalysisOut(BaseModel):
 
 
 class ImageResult(BaseModel):
+    index: int = Field(ge=0, description="Zero-based position of the file in the upload")
+    client_id: str | None = Field(default=None, description="Echo of the ID the client sent for this file")
     filename: str
     status: Status
     analyses: dict[str, AnalysisOut] = Field(default_factory=dict)

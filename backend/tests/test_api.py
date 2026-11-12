@@ -70,5 +70,36 @@ def test_batch_size_limit(client, monkeypatch):
     assert client.post(URL, files=files).status_code == 413
 
 
+def test_client_ids_round_trip_with_duplicate_filenames(client):
+    files = [
+        ("files", ("a.png", encode(sharp_image(), ".png"), "image/png")),
+        ("files", ("a.png", encode(blurry_image(), ".png"), "image/png")),
+        ("files", ("corrupt.jpg", b"\xff\xd8\xff garbage", "image/jpeg")),
+        ("files", ("notes.txt", b"hello", "text/plain")),
+    ]
+    ids = ["id-0", "id-1", "id-2", "id-3"]
+    resp = client.post(URL, files=files, data={"client_ids": ids})
+    assert resp.status_code == 200
+    results = resp.json()["results"]
+
+    assert [r["index"] for r in results] == [0, 1, 2, 3]
+    assert [r["client_id"] for r in results] == ids
+    assert results[0]["analyses"]["blur"]["flag"] == "SHARP"
+    assert results[1]["analyses"]["blur"]["flag"] == "BLURRY"
+    assert results[2]["status"] == "error" and results[3]["status"] == "error"
+
+
+def test_client_ids_optional(client):
+    files = [("files", (f"{i}.png", encode(sharp_image(64, 64), ".png"), "image/png")) for i in range(2)]
+    results = client.post(URL, files=files).json()["results"]
+    assert [r["index"] for r in results] == [0, 1]
+    assert all(r["client_id"] is None for r in results)
+
+
+def test_client_ids_length_mismatch_rejected(client):
+    files = [("files", (f"{i}.png", encode(sharp_image(64, 64), ".png"), "image/png")) for i in range(2)]
+    assert client.post(URL, files=files, data={"client_ids": ["only-one"]}).status_code == 422
+
+
 def test_health(client):
     assert client.get("/health").json() == {"status": "ok"}

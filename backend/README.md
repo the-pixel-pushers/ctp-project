@@ -60,6 +60,8 @@ runs against that proxy, and images are processed concurrently on a shared `Thre
   "total_processed": 2,
   "results": [
     {
+      "index": 0,
+      "client_id": "b2f0...",
       "filename": "img_01.jpg",
       "status": "success",
       "analyses": {
@@ -79,11 +81,14 @@ runs against that proxy, and images are processed concurrently on a shared `Thre
       },
       "error": null
     },
-    {"filename": "broken.jpg", "status": "error", "analyses": {}, "error": "File is corrupted or not a supported image"}
+    {"index": 1, "client_id": "c91e...", "filename": "broken.jpg", "status": "error", "analyses": {}, "error": "File is corrupted or not a supported image"}
   ]
 }
 ```
 
+- Matching results to files: `index` is the file's zero-based position in the upload. `client_id` echoes the
+  optional form field `client_ids` (one per file, same order; a length mismatch returns 422, and when omitted
+  `client_id` is `null`). Use it rather than `filename`, which can repeat within a batch.
 - Image-level `error`: the file couldn't be read (wrong type, too large, corrupt).
 - Analyzer-level `error`: one analyzer crashed; the other analyzers still report.
 

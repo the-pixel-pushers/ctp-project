@@ -31,7 +31,9 @@ The layout is deliberately flat. Request flow: `app/api.py` (router and dependen
 **Errors are isolated at two levels.** Never let a single item fail the whole request.
 - Image level (`processing._process_one`): wrong type, an oversize file or an undecodable image gives `ImageResult(status="error", error=..., analyses={})`.
 - Analyzer level (`processing.run_pipeline`): an analyzer that raises gives `AnalysisOut(status="error")` for that analyzer only, while the others still report.
-- Request-level HTTP errors are limited to 413 (more than `max_files_per_batch`) and 422 (no files).
+- Request-level HTTP errors are limited to 413 (more than `max_files_per_batch`) and 422 (no files, or `client_ids` length differing from `files`).
+
+**Result identity:** every `ImageResult` carries `index` (upload position, always set) and `client_id` (echo of the optional `client_ids` form field). Match results to files with these, never `filename`, which can repeat. Set them on every return path in `_process_one`, including errors. The frontend keeps the original `File` objects and exports the kept ones itself, so the backend never stores or returns image bytes.
 
 **Settings ownership:** `app/config.py` (`PHOTOSORT_*` env vars) holds only shared settings: proxy width, workers, upload limits, CORS (default `http://localhost:5173`). Feature settings live in the feature's own `BaseSettings` with their own prefix, e.g. `analyzers/blur/settings.py` → `PHOTOSORT_BLUR_THRESHOLD`.
 
