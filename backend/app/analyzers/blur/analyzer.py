@@ -6,7 +6,9 @@ image is split into a grid of tiles and we ask *where* the sharpness is:
 
 - SHARP: most of the informative (non-flat) tiles are sharp.
 - SHALLOW_FOCUS: a contiguous cluster of sharp tiles (the subject) stands out clearly from
-  a soft background, e.g. bokeh portraits. Position and size of the subject don't matter.
+  a soft background, e.g. bokeh portraits, and is itself clearly sharp in absolute terms.
+  Position and size of the subject don't matter. A single sharp tile (the only one in the
+  frame) also counts when it stands out very strongly (`min_single_tile_focus_ratio`).
 - BLURRY: nothing is clearly in focus (camera shake, motion blur, missed focus).
 
 Flat tiles (sky, plain walls, studio backdrops) carry no focus information and are ignored.
@@ -98,6 +100,7 @@ class BlurAnalyzer(Analyzer):
         sharp = informative & (sharpness >= s.threshold)
         subject = largest_cluster(sharp)
         subject_tiles = int(subject.sum())
+        lone_sharp_tile = int(sharp.sum()) == 1  # one sharp tile in the whole frame, not scattered specks
         background = informative & ~sharp
 
         sharp_area = float(sharp.sum()) / informative_count
@@ -110,11 +113,18 @@ class BlurAnalyzer(Analyzer):
 
         if sharp_area >= s.sharp_area_ratio:
             flag, score_basis = "SHARP", subject_sharpness
-        elif subject_tiles >= s.min_subject_tiles and focus_ratio >= s.min_focus_ratio:
+        elif (
+            (
+                subject_tiles >= s.min_subject_tiles
+                or (lone_sharp_tile and focus_ratio >= s.min_single_tile_focus_ratio)
+            )
+            and focus_ratio >= s.min_focus_ratio
+            and subject_sharpness >= s.min_shallow_subject_sharpness
+        ):
             flag, score_basis = "SHALLOW_FOCUS", subject_sharpness
         else:
-            # Fewer than half the informative tiles are sharp, so this median is below the
-            # threshold and the score stays under 0.5 even if a stray tile is sharp.
+            # Fewer than `sharp_area_ratio` of the informative tiles are sharp, so this median is
+            # below the threshold and the score stays under 0.5 even if a stray tile is sharp.
             flag, score_basis = "BLURRY", float(np.median(sharpness[informative]))
 
         return AnalysisResult(

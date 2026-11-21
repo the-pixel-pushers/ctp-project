@@ -67,14 +67,29 @@ def test_subject_on_blurred_background_is_shallow_focus(analyzer, box):
     assert result.score > 0.5
     # The old global rule would have flagged most of these; the subject is what's scored.
     assert result.metrics["subject_sharpness"] > result.metrics["laplacian_variance"]
-    assert result.metrics["focus_ratio"] >= 4.0
+    assert result.metrics["focus_ratio"] >= analyzer.settings.min_focus_ratio
 
 
-def test_isolated_sharp_speck_is_still_blurry(analyzer):
-    """A detail smaller than a tile (stray highlight, twig) isn't an in-focus subject."""
-    result = analyze(analyzer, bokeh_image((400, 300, 30, 30)))
+def test_isolated_sharp_speck_on_noisy_background_is_blurry(analyzer):
+    """A lone detail smaller than a tile (stray highlight, twig) isn't an in-focus subject unless it
+    stands out very strongly (ratio >= `min_single_tile_focus_ratio`); here the rest is noisy."""
+    img = bokeh_image((400, 300, 30, 30)).astype(np.float64)
+    speck = np.ones(img.shape[:2], bool)
+    speck[300:330, 400:430] = False  # leave the speck itself untouched
+    noise = np.random.default_rng(3).normal(0, 8, img.shape[:2]) * speck
+    result = analyze(analyzer, np.clip(img + noise[..., None], 0, 255).astype(np.uint8))
+    assert result.metrics["subject_tiles"] == 1
+    assert result.metrics["focus_ratio"] < analyzer.settings.min_single_tile_focus_ratio
     assert result.flag == "BLURRY"
     assert result.score < 0.5
+
+
+def test_lone_sharp_tile_on_clean_background_is_shallow_focus(analyzer):
+    """Small subject, very soft clean rest of the frame: one sharp tile is accepted by design."""
+    result = analyze(analyzer, bokeh_image((400, 300, 30, 30)))
+    assert result.metrics["subject_tiles"] == 1
+    assert result.metrics["focus_ratio"] >= analyzer.settings.min_single_tile_focus_ratio
+    assert result.flag == "SHALLOW_FOCUS"
 
 
 def test_scattered_sharp_tiles_are_not_a_subject(analyzer):
@@ -98,6 +113,43 @@ def test_weak_separation_is_blurry():
     assert result.metrics["subject_tiles"] >= 2  # there *is* a sharp-enough cluster...
     assert result.metrics["focus_ratio"] < 4.0  # ...but it doesn't stand out
     assert result.flag == "BLURRY"
+
+
+def test_soft_subject_on_softer_background_is_blurry(analyzer):
+    """The subject is far sharper than the background, but not sharp in absolute terms."""
+    img = soft_background()
+    soft_subject = cv2.GaussianBlur(sharp_image(), (0, 0), 2.6)
+    img[200:400, 300:500] = soft_subject[200:400, 300:500]
+    result = analyze(analyzer, img)
+    assert result.metrics["subject_tiles"] >= 2
+    assert result.metrics["focus_ratio"] >= analyzer.settings.min_focus_ratio
+    assert THRESHOLD <= result.metrics["subject_sharpness"] < analyzer.settings.min_shallow_subject_sharpness
+    assert result.flag == "BLURRY"
+    assert result.score < 0.5
+
+
+def test_moderate_separation_is_blurry(analyzer):
+    """A decently sharp region over a background that is soft but not *very* soft (noisy, like a
+    shaky shot) is not deliberate shallow focus."""
+    rng = np.random.default_rng(3)
+    img = soft_background().astype(np.float64)
+    img += rng.normal(0, 5.0, img.shape[:2])[..., None]
+    img = np.clip(img, 0, 255).astype(np.uint8)
+    subject = cv2.GaussianBlur(sharp_image(), (0, 0), 2.2)
+    img[200:400, 300:500] = subject[200:400, 300:500]
+    result = analyze(analyzer, img)
+    assert result.metrics["subject_sharpness"] >= analyzer.settings.min_shallow_subject_sharpness
+    assert 4.0 <= result.metrics["focus_ratio"] < analyzer.settings.min_focus_ratio
+    assert result.flag == "BLURRY"
+
+
+def test_sharp_area_just_under_half_is_sharp(analyzer):
+    """~42% of the informative tiles sharp is enough for SHARP (the ratio is 0.40)."""
+    img = soft_background()
+    img[:, : int(W * 0.4)] = sharp_image()[:, : int(W * 0.4)]
+    result = analyze(analyzer, img)
+    assert 0.4 <= result.metrics["sharp_area"] < 0.5
+    assert result.flag == "SHARP"
 
 
 def test_subject_on_flat_backdrop_is_sharp(analyzer):

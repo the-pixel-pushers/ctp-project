@@ -12,10 +12,18 @@ class BlurSettings(BaseSettings):
     # Tiles whose intensity std dev is below this are flat (sky, plain wall) and ignored.
     min_tile_contrast: float = 6.0
     # Fraction of informative tiles that must be sharp for the whole photo to count as SHARP.
-    sharp_area_ratio: float = 0.5
+    sharp_area_ratio: float = 0.40
     # Smallest contiguous cluster of sharp tiles that counts as an in-focus subject.
     min_subject_tiles: int = 2
+    # Exception to `min_subject_tiles`: when exactly one tile in the whole frame is sharp, it still counts
+    # as the subject if it stands out at least this strongly (a very soft, clean rest of the frame).
+    min_single_tile_focus_ratio: float = 40.0
     # Subject must be at least this many times sharper than the background for SHALLOW_FOCUS.
-    min_focus_ratio: float = 4.0
+    # Deliberate shallow focus has a very soft background, so the bar is high; soft frames whose
+    # "best" region is only moderately sharper than the rest fall below it.
+    min_focus_ratio: float = 20.0
+    # The SHALLOW_FOCUS subject must also be sharp in absolute terms (mean tile Laplacian variance).
+    # A coarse guard only: keep it well below real in-focus subjects (~125-140 in the samples).
+    min_shallow_subject_sharpness: float = 100.0
     # Light 3x3 Gaussian before the Laplacian so sensor noise / JPEG artifacts don't read as detail.
     denoise: bool = True
