@@ -5,4 +5,10 @@ import { defineConfig } from 'vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  server: {
+    // Forward API calls to the FastAPI backend so the browser sees one origin.
+    proxy: {
+      '/api': 'http://localhost:8000',
+    },
+  },
 })
