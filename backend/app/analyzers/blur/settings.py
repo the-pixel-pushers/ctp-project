@@ -18,6 +18,12 @@ class BlurSettings(BaseSettings):
     # Exception to `min_subject_tiles`: when exactly one tile in the whole frame is sharp, it still counts
     # as the subject if it stands out at least this strongly (a very soft, clean rest of the frame).
     min_single_tile_focus_ratio: float = 40.0
+    # For SHALLOW_FOCUS the largest sharp cluster must hold at least this share of ALL sharp tiles.
+    # A real subject is one blob; scattered specks (noise, JPEG artifacts) on a soft frame are not.
+    min_subject_cluster_share: float = 0.5
+    # Exception to the share rule: a largest cluster of at least this many tiles is a real subject even
+    # when other sharp tiles are scattered elsewhere (smooth skin/clothing fragments a real subject).
+    confident_subject_tiles: int = 5
     # Subject must be at least this many times sharper than the background for SHALLOW_FOCUS.
     # Deliberate shallow focus has a very soft background, so the bar is high; soft frames whose
     # "best" region is only moderately sharper than the rest fall below it.

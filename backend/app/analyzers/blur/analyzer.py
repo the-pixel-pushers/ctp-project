@@ -7,8 +7,10 @@ image is split into a grid of tiles and we ask *where* the sharpness is:
 - SHARP: most of the informative (non-flat) tiles are sharp.
 - SHALLOW_FOCUS: a contiguous cluster of sharp tiles (the subject) stands out clearly from
   a soft background, e.g. bokeh portraits, and is itself clearly sharp in absolute terms.
-  Position and size of the subject don't matter. A single sharp tile (the only one in the
-  frame) also counts when it stands out very strongly (`min_single_tile_focus_ratio`).
+  The cluster must hold at least `min_subject_cluster_share` of all sharp tiles (so scattered
+  specks on a soft frame don't count) unless it is big (`confident_subject_tiles`). Position and
+  size of the subject don't matter. A single sharp tile (the only one in the frame) also counts
+  when it stands out very strongly (`min_single_tile_focus_ratio`).
 - BLURRY: nothing is clearly in focus (camera shake, motion blur, missed focus).
 
 Flat tiles (sky, plain walls, studio backdrops) carry no focus information and are ignored.
@@ -100,7 +102,9 @@ class BlurAnalyzer(Analyzer):
         sharp = informative & (sharpness >= s.threshold)
         subject = largest_cluster(sharp)
         subject_tiles = int(subject.sum())
-        lone_sharp_tile = int(sharp.sum()) == 1  # one sharp tile in the whole frame, not scattered specks
+        total_sharp = int(sharp.sum())
+        lone_sharp_tile = total_sharp == 1  # one sharp tile in the whole frame, not scattered specks
+        cluster_share = subject_tiles / total_sharp if total_sharp else 0.0
         background = informative & ~sharp
 
         sharp_area = float(sharp.sum()) / informative_count
@@ -118,6 +122,7 @@ class BlurAnalyzer(Analyzer):
                 subject_tiles >= s.min_subject_tiles
                 or (lone_sharp_tile and focus_ratio >= s.min_single_tile_focus_ratio)
             )
+            and (cluster_share >= s.min_subject_cluster_share or subject_tiles >= s.confident_subject_tiles)
             and focus_ratio >= s.min_focus_ratio
             and subject_sharpness >= s.min_shallow_subject_sharpness
         ):
@@ -137,6 +142,7 @@ class BlurAnalyzer(Analyzer):
                 "sharp_area": round(sharp_area, 4),
                 "focus_ratio": round(focus_ratio, 2),
                 "subject_tiles": float(subject_tiles),
+                "sharp_tiles": float(total_sharp),
             },
         )
 
@@ -153,5 +159,6 @@ class BlurAnalyzer(Analyzer):
                 "sharp_area": 1.0 if is_sharp else 0.0,
                 "focus_ratio": 1.0,
                 "subject_tiles": 0.0,
+                "sharp_tiles": 0.0,
             },
         )

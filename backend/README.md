@@ -108,7 +108,7 @@ blurred background, so the analyzer builds a **local sharpness map** instead:
 | Flag | When |
 |---|---|
 | `SHARP` | At least `sharp_area_ratio` (50%) of the informative tiles are sharp |
-| `SHALLOW_FOCUS` | The subject cluster has ≥ `min_subject_tiles` (2) tiles **and** is ≥ `min_focus_ratio` (4×) sharper than the background median. This is accepted intentional blur. |
+| `SHALLOW_FOCUS` | The subject cluster has ≥ `min_subject_tiles` (2) tiles **and** is ≥ `min_focus_ratio` (4×) sharper than the background median, **and** the cluster holds ≥ `min_subject_cluster_share` (50%) of all sharp tiles (scattered specks don't count), unless the cluster has ≥ `confident_subject_tiles` (5) tiles. This is accepted intentional blur. |
 | `BLURRY` | Anything else: camera shake, motion blur, missed focus, isolated sharp specks |
 
 `score = s / (s + threshold)`, where `s` is the subject's mean sharpness, or for `BLURRY` the
@@ -167,6 +167,8 @@ Override any setting with an environment variable (or a `.env` file):
 | `PHOTOSORT_BLUR_SHARP_AREA_RATIO` | `0.5` |
 | `PHOTOSORT_BLUR_MIN_SUBJECT_TILES` | `2` |
 | `PHOTOSORT_BLUR_MIN_FOCUS_RATIO` | `4.0` |
+| `PHOTOSORT_BLUR_MIN_SUBJECT_CLUSTER_SHARE` | `0.5` |
+| `PHOTOSORT_BLUR_CONFIDENT_SUBJECT_TILES` | `5` |
 | `PHOTOSORT_BLUR_DENOISE` | `true` |
 | `PHOTOSORT_OVEREXPOSURE_BRIGHTNESS_THRESHOLD` | `190.0` |
 | `PHOTOSORT_OVEREXPOSURE_HIGHLIGHT_LEVEL` | `250` |

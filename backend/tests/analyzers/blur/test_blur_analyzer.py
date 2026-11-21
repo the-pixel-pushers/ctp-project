@@ -103,6 +103,53 @@ def test_scattered_sharp_tiles_are_not_a_subject(analyzer):
     assert result.metrics["subject_tiles"] <= 1
 
 
+def test_fragmented_sharp_tiles_are_not_shallow_focus(analyzer):
+    """A 2-tile cluster plus several far-apart sharp tiles on a soft frame is noise, not a subject."""
+    img = soft_background()
+    sharp = sharp_image()
+    # Tiles are ~67px on the 12x9 grid: one 2-tile cluster and five isolated tiles.
+    for x, y, w, h in [
+        (267, 200, 133, 67),
+        (0, 0, 67, 67),
+        (733, 0, 67, 67),
+        (0, 533, 67, 67),
+        (733, 533, 67, 67),
+        (733, 267, 67, 67),
+    ]:
+        img[y : y + h, x : x + w] = sharp[y : y + h, x : x + w]
+    result = analyze(analyzer, img)
+    assert result.metrics["subject_tiles"] >= 2
+    assert result.flag == "BLURRY"
+    assert result.score < 0.5
+    # The guard is what rejects it: without it, every other SHALLOW_FOCUS gate passes.
+    lenient = BlurAnalyzer(BlurSettings(threshold=THRESHOLD, min_subject_cluster_share=0.0))
+    assert analyze(lenient, img).flag == "SHALLOW_FOCUS"
+
+
+def test_large_fragmented_subject_is_still_shallow_focus(analyzer):
+    """A real subject with smooth areas leaves sharp tiles scattered around it; a big cluster still counts."""
+    img = soft_background()
+    sharp = sharp_image()
+    # Tiles are ~67px on the 12x9 grid: one 3x2-tile cluster plus isolated tiles elsewhere.
+    for x, y, w, h in [
+        (267, 200, 200, 133),
+        (0, 0, 67, 67),
+        (133, 0, 67, 67),
+        (267, 0, 67, 67),
+        (667, 0, 67, 67),
+        (0, 533, 67, 67),
+        (267, 533, 67, 67),
+        (667, 533, 67, 67),
+        (733, 267, 67, 67),
+    ]:
+        img[y : y + h, x : x + w] = sharp[y : y + h, x : x + w]
+    result = analyze(analyzer, img)
+    s = analyzer.settings
+    assert result.metrics["subject_tiles"] >= s.confident_subject_tiles
+    assert result.metrics["subject_tiles"] / result.metrics["sharp_tiles"] < s.min_subject_cluster_share
+    assert result.flag == "SHALLOW_FOCUS"
+
+
 def test_weak_separation_is_blurry():
     """A subject barely sharper than its background isn't deliberate shallow focus."""
     background = cv2.GaussianBlur(sharp_image(), (0, 0), 3)
@@ -184,6 +231,7 @@ def test_metrics_are_finite_floats(analyzer):
             "sharp_area",
             "focus_ratio",
             "subject_tiles",
+            "sharp_tiles",
         }
         assert all(isinstance(v, float) and np.isfinite(v) for v in metrics.values())
 
