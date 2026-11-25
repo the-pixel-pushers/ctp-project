@@ -166,11 +166,6 @@ export function useTuning() {
     else localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides))
   }, [catalog, overrides])
 
-  const setParam = useCallback(
-    (analyzer: string, spec: ParamSpec, value: number) =>
-      setValues((prev) => ({ ...prev, [analyzer]: { ...prev[analyzer], [spec.key]: clamp(spec, value) } })),
-    []
-  )
   const setLevel = useCallback(
     (slider: SliderSpec, level: number) => setValues((prev) => setSliderLevel(prev, slider, level)),
     []
@@ -179,18 +174,13 @@ export function useTuning() {
     (preset: PresetSpec) => catalog && setValues(valuesForPreset(catalog, preset)),
     [catalog]
   )
-  const resetParam = useCallback(
-    (analyzer: string, spec: ParamSpec) =>
-      setValues((prev) => ({ ...prev, [analyzer]: { ...prev[analyzer], [spec.key]: spec.default } })),
-    []
-  )
   const resetSlider = useCallback(
     (slider: SliderSpec) => setValues((prev) => setSliderLevel(prev, slider, slider.default_level)),
     []
   )
   const resetAll = useCallback(() => catalog && setValues(defaultValues(catalog)), [catalog])
 
-  return { catalog, values, overrides, error, setParam, setLevel, applyPreset, resetParam, resetSlider, resetAll }
+  return { catalog, values, overrides, error, setLevel, applyPreset, resetSlider, resetAll }
 }
 
 export type Tuning = ReturnType<typeof useTuning>

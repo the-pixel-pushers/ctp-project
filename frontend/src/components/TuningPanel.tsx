@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ChevronDown, Loader2, RefreshCw, RotateCcw, SlidersHorizontal } from 'lucide-react'
-import { activePreset, currentLevel, type ParamSpec, type Tuning } from '../lib/tuning'
+import { activePreset, currentLevel, type Tuning } from '../lib/tuning'
 
 interface TuningPanelProps {
   tuning: Tuning
@@ -8,12 +8,6 @@ interface TuningPanelProps {
   photoCount: number
   isReanalyzing: boolean
   onReanalyze: () => void
-}
-
-const ANALYZER_TITLES: Record<string, string> = {
-  blur: 'Blur / focus',
-  overexposure: 'Over-exposure',
-  underexposure: 'Under-exposure',
 }
 
 function ResetButton({ onClick, title }: { onClick: () => void; title: string }) {
@@ -29,35 +23,9 @@ function ResetButton({ onClick, title }: { onClick: () => void; title: string })
   )
 }
 
-/** Number input that only commits (and clamps) on blur/Enter, so typing "5" on the way to "50" works. */
-function NumberField({ spec, value, onCommit }: { spec: ParamSpec; value: number; onCommit: (v: number) => void }) {
-  const [draft, setDraft] = useState<string | null>(null)
-  const commit = () => {
-    if (draft !== null) {
-      const parsed = Number(draft)
-      if (draft.trim() !== '' && Number.isFinite(parsed)) onCommit(parsed)
-      setDraft(null)
-    }
-  }
-  return (
-    <input
-      type="number"
-      min={spec.min}
-      max={spec.max}
-      step={spec.step}
-      value={draft ?? value}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => e.key === 'Enter' && commit()}
-      className="w-24 px-2 py-1 rounded-md bg-white/[0.04] border border-white/[0.08] text-[12px] font-mono text-neutral-200 focus:outline-none focus:border-violet-400/50"
-    />
-  )
-}
-
 export function TuningPanel({ tuning, photoCount, isReanalyzing, onReanalyze }: TuningPanelProps) {
   const { catalog, values, overrides, error } = tuning
   const [open, setOpen] = useState(false)
-  const [advanced, setAdvanced] = useState(false)
 
   if (error) {
     return <p className="mb-6 text-[11px] font-mono text-neutral-600">{error}</p>
@@ -65,7 +33,8 @@ export function TuningPanel({ tuning, photoCount, isReanalyzing, onReanalyze }: 
   if (!catalog) return null
 
   const preset = activePreset(catalog, values)
-  const modifiedCount = Object.values(overrides).reduce((n, group) => n + Object.keys(group).length, 0)
+  const isModified = Object.keys(overrides).length > 0
+  const modifiedCount = catalog.sliders.filter((s) => currentLevel(values, s) !== s.default_level).length
 
   return (
     <section className="mb-8 rounded-2xl border border-white/[0.06] bg-white/[0.02]">
@@ -79,10 +48,10 @@ export function TuningPanel({ tuning, photoCount, isReanalyzing, onReanalyze }: 
         <span className="font-mono text-[11px] px-2 py-0.5 rounded-full border border-white/[0.06] bg-white/[0.03] text-neutral-400">
           {preset ? preset.label : 'Custom'}
         </span>
-        {modifiedCount > 0 && (
+        {isModified && (
           <span className="flex items-center gap-1.5 text-[11px] font-mono text-violet-300" title="Differs from defaults">
             <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
-            {modifiedCount} changed
+            {modifiedCount > 0 ? `${modifiedCount} changed` : 'changed'}
           </span>
         )}
         <ChevronDown
@@ -149,68 +118,11 @@ export function TuningPanel({ tuning, photoCount, isReanalyzing, onReanalyze }: 
             })}
           </div>
 
-          {/* Raw values */}
-          <div>
-            <button
-              onClick={() => setAdvanced((a) => !a)}
-              aria-expanded={advanced}
-              className="flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-wider text-neutral-500 hover:text-white cursor-pointer"
-            >
-              <ChevronDown className={`w-3 h-3 transition-transform ${advanced ? 'rotate-180' : ''}`} />
-              Advanced values
-            </button>
-            {advanced && (
-              <div className="mt-3 space-y-5">
-                {Object.entries(catalog.params).map(([analyzer, specs]) => (
-                  <div key={analyzer} className="space-y-2">
-                    <p className="text-[12px] font-semibold text-neutral-400">
-                      {ANALYZER_TITLES[analyzer] ?? analyzer}
-                    </p>
-                    {specs.map((spec) => {
-                      const value = values[analyzer]?.[spec.key] ?? spec.default
-                      const changed = Math.abs(value - spec.default) > 1e-9
-                      return (
-                        <div key={spec.key} className="flex items-center gap-3">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-[12px] text-neutral-300 flex items-center gap-2">
-                              {spec.label}
-                              {changed && <span className="w-1.5 h-1.5 rounded-full bg-violet-400" title="Changed" />}
-                            </p>
-                            <p className="text-[11px] text-neutral-600 truncate" title={spec.description}>
-                              {spec.description}
-                            </p>
-                          </div>
-                          <span className="text-[10px] font-mono text-neutral-700">
-                            {spec.min}–{spec.max}
-                          </span>
-                          <NumberField
-                            key={value}
-                            spec={spec}
-                            value={value}
-                            onCommit={(v) => tuning.setParam(analyzer, spec, v)}
-                          />
-                          <span className="w-6">
-                            {changed && (
-                              <ResetButton
-                                onClick={() => tuning.resetParam(analyzer, spec)}
-                                title={`Reset ${spec.label} to ${spec.default}`}
-                              />
-                            )}
-                          </span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
           {/* Actions */}
           <div className="flex flex-wrap items-center gap-3 pt-1">
             <button
               onClick={tuning.resetAll}
-              disabled={modifiedCount === 0}
+              disabled={!isModified}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-medium border border-white/[0.08] text-neutral-400 hover:text-white hover:border-white/[0.2] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <RotateCcw className="w-3 h-3" strokeWidth={1.5} />

@@ -310,12 +310,50 @@ def _preset(id: str, label: str, description: str, **levels: int) -> PresetSpec:
 PRESETS: list[PresetSpec] = [
     _preset("default", "Default", "Balanced settings for general photos."),
     _preset(
+        "strict_cull",
+        "Strict cull",
+        "Keep only the best: tighter sharpness, subject separation and exposure limits.",
+        sharpness_strictness=3,
+        sharp_area=3,
+        background_separation=3,
+        highlight_tolerance=1,
+        shadow_tolerance=1,
+    ),
+    _preset(
+        "lenient_cull",
+        "Lenient cull",
+        "Flag only clearly bad shots: looser sharpness, subject separation and exposure limits.",
+        sharpness_strictness=1,
+        sharp_area=1,
+        background_separation=1,
+        highlight_tolerance=3,
+        shadow_tolerance=3,
+    ),
+    _preset(
         "portrait_bokeh",
         "Portrait / bokeh",
         "Small in-focus subject on a soft background: finer grid, clear separation required.",
         subject_size=3,
         background_separation=3,
         sharp_area=3,
+    ),
+    _preset(
+        "wildlife",
+        "Wildlife / telephoto",
+        "Tiny subject on a heavily blurred background; lenient sharpness for atmospheric haze.",
+        subject_size=4,
+        background_separation=3,
+        sharp_area=3,
+        sharpness_strictness=1,
+    ),
+    _preset(
+        "sports_action",
+        "Sports / action",
+        "Small, fast subjects; panning leaves backgrounds only partly soft, so separation is relaxed.",
+        subject_size=3,
+        sharpness_strictness=1,
+        background_separation=1,
+        sharp_area=1,
     ),
     _preset(
         "landscape",
@@ -341,6 +379,15 @@ PRESETS: list[PresetSpec] = [
         shadow_tolerance=4,
     ),
     _preset("high_key", "High-key", "Bright, airy scenes are intentional.", highlight_tolerance=4),
+    _preset(
+        "concert_events",
+        "Concert / events",
+        "Dim venues with stage lights: very lenient sharpness, tolerant shadows and highlights.",
+        sharpness_strictness=0,
+        shadow_tolerance=4,
+        highlight_tolerance=3,
+        subject_size=3,
+    ),
 ]
 
 

@@ -64,6 +64,13 @@ def test_presets_reference_real_sliders_and_levels():
     assert all(idx == sliders[sid].default_level for sid, idx in PRESETS[0].levels.items())
 
 
+def test_presets_resolve_to_distinct_slider_levels():
+    """The frontend highlights the first preset matching the current values, so none may be identical."""
+    combos = [tuple(sorted(p.levels.items())) for p in PRESETS]
+    assert len(set(combos)) == len(combos)
+    assert len({p.id for p in PRESETS}) == len(PRESETS)
+
+
 def test_params_cover_only_existing_settings_fields():
     for name, specs in PARAMS.items():
         for spec in specs:
