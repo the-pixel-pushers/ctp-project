@@ -6,8 +6,9 @@ rather than return partial results.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from app.imaging import PreparedImage
 
@@ -24,3 +25,12 @@ class Analyzer(ABC):
 
     @abstractmethod
     def analyze(self, image: PreparedImage) -> AnalysisResult: ...
+
+    def with_overrides(self, overrides: Mapping[str, Any]) -> "Analyzer":
+        """A new analyzer whose `settings` are this one's with `overrides` applied (re-validated).
+        Never mutates `self`, so shared instances stay thread-safe. Analyzers without a `settings`
+        attribute are returned unchanged."""
+        settings = getattr(self, "settings", None)
+        if not overrides or settings is None:
+            return self
+        return type(self)(type(settings)(**{**settings.model_dump(), **overrides}))

@@ -13,6 +13,8 @@ export interface Photo {
   issues: QualityIssue[]
   /** Raw backend flags, e.g. { blur: 'SHALLOW_FOCUS', overexposure: 'OK' } */
   flags: Record<string, string>
+  /** Raw backend metrics per analyzer, e.g. { blur: { focus_ratio: 31.2, ... } }; used for tuning suggestions. */
+  metrics: Record<string, Record<string, number>>
   liked: boolean
   dateAdded: string
 }

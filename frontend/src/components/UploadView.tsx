@@ -10,13 +10,16 @@ import {
   type Photo,
   type StagedFile,
 } from '../lib/photos'
-import { cullPhotos, issuesFromAnalyses } from '../lib/api'
+import { analysisFields, cullPhotos } from '../lib/api'
+import type { TuningValues } from '../lib/tuning'
 
 interface UploadViewProps {
   onAnalyzed: (photos: Photo[]) => void
+  /** User-tuned analyzer settings sent with the batch (empty = server defaults). */
+  overrides: TuningValues
 }
 
-export function UploadView({ onAnalyzed }: UploadViewProps) {
+export function UploadView({ onAnalyzed, overrides }: UploadViewProps) {
   const [stagedFiles, setStagedFiles] = useState<StagedFile[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
@@ -72,7 +75,10 @@ export function UploadView({ onAnalyzed }: UploadViewProps) {
     setStagedFiles((prev) => prev.map((f) => (uploadingIds.has(f.id) ? { ...f, status: 'uploading' } : f)))
 
     try {
-      const results = await cullPhotos(toUpload.map((f) => f.file))
+      const results = await cullPhotos(
+        toUpload.map((f) => f.file),
+        overrides
+      )
       const today = new Date().toISOString().slice(0, 10)
       const analyzed: Photo[] = []
       const failed = new Map<string, string>()
@@ -90,10 +96,7 @@ export function UploadView({ onAnalyzed }: UploadViewProps) {
           url: staged.thumbnail, // ownership of the object URL moves to the gallery
           resolution: staged.resolution,
           size: staged.size,
-          issues: issuesFromAnalyses(result.analyses),
-          flags: Object.fromEntries(
-            Object.entries(result.analyses).map(([name, a]) => [name, a.flag ?? 'ERROR'])
-          ),
+          ...analysisFields(result.analyses),
           liked: false,
           dateAdded: today,
         })

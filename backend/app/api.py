@@ -1,3 +1,4 @@
+import json
 from concurrent.futures import Executor
 from typing import Annotated
 
@@ -7,6 +8,7 @@ from app.analyzers.base import Analyzer
 from app.config import Settings, get_settings
 from app.processing import process_batch
 from app.schemas import CullBatchResponse
+from app.tuning import Catalog, InvalidTuningError, apply_overrides, build_catalog, validate_overrides
 
 router = APIRouter(prefix="/api/v1", tags=["culling"])
 
@@ -36,6 +38,13 @@ async def cull_batch(
         list[str] | None,
         Form(description="Optional IDs, one per file in the same order; echoed back as `client_id`"),
     ] = None,
+    tuning: Annotated[
+        str | None,
+        Form(
+            description="Optional JSON `{analyzer: {param: value}}` overriding tunable analyzer settings "
+            "for this batch only; see `GET /api/v1/settings` for the allowed params and bounds"
+        ),
+    ] = None,
 ) -> CullBatchResponse:
     """Run every registered analyzer on each image. Per-image failures are reported inline.
     Each result carries its upload `index` and, if supplied, the matching `client_id`."""
@@ -49,4 +58,21 @@ async def cull_batch(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Got {len(client_ids)} client_ids for {len(files)} files; they must match",
         )
+    if tuning:
+        try:
+            overrides = validate_overrides(json.loads(tuning), analyzers)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="`tuning` is not valid JSON"
+            ) from exc
+        except InvalidTuningError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+        analyzers = apply_overrides(analyzers, overrides)
     return await process_batch(files, analyzers, executor, settings, client_ids)
+
+
+@router.get("/settings", response_model=Catalog)
+def get_tuning_catalog(analyzers: Annotated[list[Analyzer], Depends(get_analyzers)]) -> Catalog:
+    """Tunable parameters (bounds, defaults), sliders and scene presets. Defaults reflect the
+    server's configuration, so a client-side Reset is just applying these values."""
+    return build_catalog(analyzers)

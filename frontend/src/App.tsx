@@ -1,18 +1,74 @@
-import { useState } from 'react'
-import { Aperture, Upload, Images, Sparkles } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { Aperture, Upload, Images, Sparkles, AlertCircle, X } from 'lucide-react'
 import { UploadView } from './components/UploadView'
 import { GalleryView } from './components/GalleryView'
+import { TuningPanel } from './components/TuningPanel'
+import { analysisFields, cullPhotos } from './lib/api'
 import type { Photo } from './lib/photos'
+import {
+  activePreset,
+  looksLikeBokehSession,
+  overridesOf,
+  useTuning,
+  valuesForPreset,
+  type TuningValues,
+} from './lib/tuning'
 
 type Tab = 'upload' | 'gallery'
+
+const BOKEH_PRESET_ID = 'portrait_bokeh'
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('upload')
   const [photos, setPhotos] = useState<Photo[]>([])
+  const tuning = useTuning()
+  const [isReanalyzing, setIsReanalyzing] = useState(false)
+  const [reanalyzeError, setReanalyzeError] = useState<string | null>(null)
+  const [suggestionDismissed, setSuggestionDismissed] = useState(false)
 
   const handleAnalyzed = (newPhotos: Photo[]) => {
     setPhotos((prev) => [...newPhotos, ...prev])
     setActiveTab('gallery')
+  }
+
+  /** Re-run every photo in the gallery through the backend with the given (or current) overrides. */
+  const reanalyze = async (overrides: TuningValues = tuning.overrides) => {
+    if (isReanalyzing || photos.length === 0) return
+    setIsReanalyzing(true)
+    setReanalyzeError(null)
+    const targets = photos
+    try {
+      const results = await cullPhotos(
+        targets.map((p) => p.file),
+        overrides
+      )
+      const updates = new Map<string, Pick<Photo, 'issues' | 'flags' | 'metrics'>>()
+      let failed = 0
+      results.forEach((result, i) => {
+        if (result.status === 'success') updates.set(targets[i].id, analysisFields(result.analyses))
+        else failed++
+      })
+      // Merge by id: photos may have been liked or deleted while the request was in flight.
+      setPhotos((prev) => prev.map((p) => (updates.has(p.id) ? { ...p, ...updates.get(p.id)! } : p)))
+      if (failed > 0) setReanalyzeError(`${failed} photo${failed !== 1 ? 's' : ''} could not be re-analyzed`)
+    } catch (e) {
+      setReanalyzeError(e instanceof Error ? e.message : 'Re-analysis failed')
+    } finally {
+      setIsReanalyzing(false)
+    }
+  }
+
+  // Suggest the bokeh preset only while on the defaults, so it never overrides a deliberate choice.
+  const bokehPreset = tuning.catalog?.presets.find((p) => p.id === BOKEH_PRESET_ID)
+  const onDefaults =
+    tuning.catalog !== null && activePreset(tuning.catalog, tuning.values)?.id === tuning.catalog.default_preset
+  const bokehSignal = useMemo(() => looksLikeBokehSession(photos), [photos])
+  const suggestion = bokehPreset && onDefaults && !suggestionDismissed ? bokehSignal : null
+
+  const acceptSuggestion = () => {
+    if (!tuning.catalog || !bokehPreset) return
+    tuning.applyPreset(bokehPreset)
+    reanalyze(overridesOf(tuning.catalog, valuesForPreset(tuning.catalog, bokehPreset)))
   }
 
   return (
@@ -75,8 +131,53 @@ function App() {
       {/* Main Content */}
       <main className="flex-1 relative z-10 pt-24 pb-12">
         <div className="max-w-[1400px] mx-auto px-6">
+          <TuningPanel
+            tuning={tuning}
+            photoCount={photos.length}
+            isReanalyzing={isReanalyzing}
+            onReanalyze={() => reanalyze()}
+          />
+
+          {suggestion && (
+            <div className="mb-6 flex flex-wrap items-center gap-3 px-4 py-3 rounded-xl border border-violet-400/20 bg-violet-500/[0.06] text-violet-200 text-[13px]">
+              <Sparkles className="w-4 h-4 flex-shrink-0" strokeWidth={1.5} />
+              <span className="flex-1 min-w-[16rem]">
+                Looks like a bokeh session: {suggestion.count} of {suggestion.total} photos read as blurry but have a
+                distinct sharp subject. Switch to “{bokehPreset?.label}” and re-analyze?
+              </span>
+              <button
+                onClick={acceptSuggestion}
+                disabled={isReanalyzing}
+                className="px-3 py-1.5 rounded-full bg-white text-black text-[12px] font-semibold cursor-pointer disabled:opacity-50"
+              >
+                Switch &amp; re-analyze
+              </button>
+              <button
+                onClick={() => setSuggestionDismissed(true)}
+                aria-label="Dismiss suggestion"
+                className="p-1 rounded hover:bg-white/[0.06] cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" strokeWidth={1.5} />
+              </button>
+            </div>
+          )}
+
+          {reanalyzeError && (
+            <div className="mb-6 flex items-center gap-3 px-4 py-3 rounded-xl border border-red-400/20 bg-red-500/[0.06] text-red-300 text-[13px]">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" strokeWidth={1.5} />
+              <span className="flex-1">{reanalyzeError}</span>
+              <button
+                onClick={() => setReanalyzeError(null)}
+                aria-label="Dismiss error"
+                className="p-1 rounded hover:bg-red-500/10 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" strokeWidth={1.5} />
+              </button>
+            </div>
+          )}
+
           {activeTab === 'upload' ? (
-            <UploadView onAnalyzed={handleAnalyzed} />
+            <UploadView onAnalyzed={handleAnalyzed} overrides={tuning.overrides} />
           ) : (
             <GalleryView photos={photos} setPhotos={setPhotos} onGoToUpload={() => setActiveTab('upload')} />
           )}
