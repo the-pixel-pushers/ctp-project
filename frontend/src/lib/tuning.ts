@@ -179,25 +179,10 @@ export function useTuning() {
     []
   )
   const resetAll = useCallback(() => catalog && setValues(defaultValues(catalog)), [catalog])
+  /** Put back a previously captured `values` snapshot (used by Undo). */
+  const restoreValues = useCallback((snapshot: TuningValues) => setValues(snapshot), [])
 
-  return { catalog, values, overrides, error, setLevel, applyPreset, resetSlider, resetAll }
+  return { catalog, values, overrides, error, setLevel, applyPreset, resetSlider, resetAll, restoreValues }
 }
 
 export type Tuning = ReturnType<typeof useTuning>
-
-/**
- * Heuristic: does this batch look like a bokeh / shallow-depth-of-field session that the current
- * thresholds are mislabeling as BLURRY? A photo counts when it is BLURRY yet has a sharp subject
- * region that clearly stands out from a soft background.
- */
-export function looksLikeBokehSession(
-  photos: { flags: Record<string, string>; metrics: Record<string, Record<string, number>> }[]
-): { count: number; total: number } | null {
-  const total = photos.length
-  if (total < 3) return null
-  const count = photos.filter((p) => {
-    const m = p.metrics.blur
-    return p.flags.blur === 'BLURRY' && m && m.subject_tiles >= 1 && m.focus_ratio >= 8
-  }).length
-  return count >= 2 && count / total >= 0.25 ? { count, total } : null
-}

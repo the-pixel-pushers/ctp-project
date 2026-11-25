@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from app.analyzers.base import Analyzer
 from app.config import Settings, get_settings
 from app.processing import process_batch
-from app.schemas import CullBatchResponse
+from app.schemas import CullBatchResponse, PresetSuggestion, SuggestRequest
+from app.suggest import suggest_preset
 from app.tuning import Catalog, InvalidTuningError, apply_overrides, build_catalog, validate_overrides
 
 router = APIRouter(prefix="/api/v1", tags=["culling"])
@@ -69,6 +70,13 @@ async def cull_batch(
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
         analyzers = apply_overrides(analyzers, overrides)
     return await process_batch(files, analyzers, executor, settings, client_ids)
+
+
+@router.post("/suggest-preset", response_model=PresetSuggestion | None)
+def suggest_batch_preset(request: SuggestRequest) -> PresetSuggestion | None:
+    """Best scene preset for a batch of analyzed photos, from the flags and metrics `cull-batch`
+    returned (analyzed with default tuning). `null` means no scene stands out: stay on Default."""
+    return suggest_preset(request.photos)
 
 
 @router.get("/settings", response_model=Catalog)

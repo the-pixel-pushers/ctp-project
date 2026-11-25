@@ -43,6 +43,19 @@ def bokeh_image(
     return img
 
 
+def landscape_image(sky_fraction: float = 0.8, width: int = 800, height: int = 600) -> np.ndarray:
+    """Bright, smooth-but-not-flat sky (soft clouds) over a sharp, detailed lower band.
+
+    Reproduces the landscape failure seen on real photos: the sky tiles are informative at the
+    default `min_tile_contrast` yet have no detail, so they dilute `sharp_area`."""
+    img = sharp_image(width, height)
+    split = int(height * sky_fraction)
+    # +25: brighter than the scene below (like a real sky) without reading as over-exposed overall
+    sky = np.clip(soft_background(width, height).astype(np.int16) + 25, 0, 255).astype(np.uint8)
+    img[:split] = sky[:split]
+    return img
+
+
 def solid_image(value: int, width: int = 200, height: int = 150) -> np.ndarray:
     """Uniform gray image; its luma equals `value`."""
     return np.full((height, width, 3), value, dtype=np.uint8)

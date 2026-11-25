@@ -151,6 +151,24 @@ PARAMS: dict[str, list[ParamSpec]] = {
             400,
             5,
         ),
+        _p(
+            "min_sharp_region_area",
+            "Sharp region area",
+            "A sharp cluster covering this share of informative tiles makes the photo SHARP (1 = off).",
+            "float",
+            0.01,
+            1.0,
+            0.01,
+        ),
+        _p(
+            "min_sharp_region_sharpness",
+            "Sharp region sharpness",
+            "Mean sharpness the cluster needs for the sharp-region rule.",
+            "float",
+            20,
+            400,
+            5,
+        ),
     ],
     "overexposure": [
         _p(
@@ -217,7 +235,8 @@ def _level(label: str, **per_analyzer: dict[str, float]) -> SliderLevel:
     return SliderLevel(label=label, values=per_analyzer)
 
 
-# Five levels per slider; level 2 must reproduce the shipped defaults (a test checks this).
+# Each slider's `default_level` must reproduce the shipped defaults (a test checks this). Most have
+# five levels with the default in the middle; on/off-style sliders start at level 0.
 # Tile-count params scale roughly with grid_cols**2 so "subject size" stays coherent.
 SLIDERS: list[SliderSpec] = [
     SliderSpec(
@@ -298,6 +317,44 @@ SLIDERS: list[SliderSpec] = [
             _level("Very tolerant", underexposure={"brightness_threshold": 60, "shadow_ratio": 0.15}),
         ],
     ),
+    # Calibrated on 4,319 real landscape photos (see the "Blur analyzer" notes in backend/CLAUDE.md):
+    # "Ignore" kept 82.5% of good originals as non-BLURRY (Default: 70.1%) while still catching
+    # ~97% of mild defocus and 70% of camera shake (Default: 81%).
+    SliderSpec(
+        id="smooth_areas",
+        label="Sky & smooth areas",
+        description=(
+            "Large textureless areas (sky, calm water, snow, sand) can make a sharp photo read as "
+            "blurry. Ignore them to judge only the detailed parts."
+        ),
+        default_level=0,
+        levels=[
+            _level(
+                "Count them",
+                blur={
+                    "min_tile_contrast": 6,
+                    "min_sharp_region_area": 1.0,
+                    "min_sharp_region_sharpness": 130,
+                },
+            ),
+            _level(
+                "Partly ignore",
+                blur={
+                    "min_tile_contrast": 8,
+                    "min_sharp_region_area": 0.10,
+                    "min_sharp_region_sharpness": 140,
+                },
+            ),
+            _level(
+                "Ignore",
+                blur={
+                    "min_tile_contrast": 10,
+                    "min_sharp_region_area": 0.05,
+                    "min_sharp_region_sharpness": 130,
+                },
+            ),
+        ],
+    ),
 ]
 
 _DEFAULT_LEVELS = {s.id: s.default_level for s in SLIDERS}
@@ -357,11 +414,9 @@ PRESETS: list[PresetSpec] = [
     ),
     _preset(
         "landscape",
-        "Landscape / deep focus",
-        "Most of the frame should be sharp.",
-        subject_size=1,
-        sharpness_strictness=3,
-        sharp_area=3,
+        "Landscape",
+        "Judge only the detailed parts; sky, water and snow no longer count against sharpness.",
+        smooth_areas=2,
     ),
     _preset(
         "macro",
@@ -456,6 +511,8 @@ def _check_consistency(overrides: dict[str, dict[str, float]], by_name: Mapping[
         raise InvalidTuningError("'blur.min_shallow_subject_sharpness' must be at least 'blur.threshold'")
     if s["confident_subject_tiles"] < s["min_subject_tiles"]:
         raise InvalidTuningError("'blur.confident_subject_tiles' must be at least 'blur.min_subject_tiles'")
+    if s["min_sharp_region_sharpness"] < s["threshold"]:
+        raise InvalidTuningError("'blur.min_sharp_region_sharpness' must be at least 'blur.threshold'")
 
 
 def apply_overrides(

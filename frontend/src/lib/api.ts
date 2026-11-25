@@ -61,8 +61,34 @@ export async function cullPhotos(files: File[], overrides: TuningValues = {}): P
   return results
 }
 
+export interface PresetSuggestion {
+  preset_id: string
+  /** Share of the batch matching the preset's scene, 0..1. */
+  confidence: number
+  matched: number
+  total: number
+  reasons: string[]
+  alternatives: { preset_id: string; confidence: number }[]
+}
+
+/**
+ * Ask the backend for the best scene preset for a batch analyzed with default tuning.
+ * Resolves to null when no scene stands out (stay on Default).
+ */
+export async function suggestPreset(photos: Pick<Photo, 'flags' | 'metrics'>[]): Promise<PresetSuggestion | null> {
+  const res = await fetch(`${API_BASE}/api/v1/suggest-preset`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ photos: photos.map(({ flags, metrics }) => ({ flags, metrics })) }),
+  })
+  if (!res.ok) throw new Error(`Backend returned ${res.status}`)
+  return res.json()
+}
+
+export type AnalysisFields = Pick<Photo, 'issues' | 'flags' | 'metrics'>
+
 /** The analysis-derived Photo fields, shared by first analysis and re-analysis. */
-export function analysisFields(analyses: Record<string, AnalysisOut>): Pick<Photo, 'issues' | 'flags' | 'metrics'> {
+export function analysisFields(analyses: Record<string, AnalysisOut>): AnalysisFields {
   return {
     issues: issuesFromAnalyses(analyses),
     flags: Object.fromEntries(Object.entries(analyses).map(([name, a]) => [name, a.flag ?? 'ERROR'])),

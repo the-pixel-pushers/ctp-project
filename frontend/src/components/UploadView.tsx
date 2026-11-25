@@ -14,7 +14,8 @@ import { analysisFields, cullPhotos } from '../lib/api'
 import type { TuningValues } from '../lib/tuning'
 
 interface UploadViewProps {
-  onAnalyzed: (photos: Photo[]) => void
+  /** `overridesUsed` is the tuning the batch was analyzed with (empty = server defaults). */
+  onAnalyzed: (photos: Photo[], overridesUsed: TuningValues) => void
   /** User-tuned analyzer settings sent with the batch (empty = server defaults). */
   overrides: TuningValues
 }
@@ -74,10 +75,11 @@ export function UploadView({ onAnalyzed, overrides }: UploadViewProps) {
     const uploadingIds = new Set(toUpload.map((f) => f.id))
     setStagedFiles((prev) => prev.map((f) => (uploadingIds.has(f.id) ? { ...f, status: 'uploading' } : f)))
 
+    const overridesUsed = overrides // the settings may change while the request is in flight
     try {
       const results = await cullPhotos(
         toUpload.map((f) => f.file),
-        overrides
+        overridesUsed
       )
       const today = new Date().toISOString().slice(0, 10)
       const analyzed: Photo[] = []
@@ -111,7 +113,7 @@ export function UploadView({ onAnalyzed, overrides }: UploadViewProps) {
       if (failed.size > 0) {
         setError(`${failed.size} file${failed.size !== 1 ? 's' : ''} could not be analyzed`)
       }
-      if (analyzed.length > 0) onAnalyzed(analyzed)
+      if (analyzed.length > 0) onAnalyzed(analyzed, overridesUsed)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed')
       setStagedFiles((prev) => prev.map((f) => (uploadingIds.has(f.id) ? { ...f, status: 'ready' } : f)))

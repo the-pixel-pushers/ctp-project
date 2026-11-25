@@ -5,7 +5,7 @@ import pytest
 from app.analyzers.blur import BlurAnalyzer, BlurSettings
 from app.analyzers.blur.analyzer import grid_shape, largest_cluster, normalize_score, tile_stats
 from app.imaging import PreparedImage
-from tests.conftest import blurry_image, bokeh_image, sharp_image, soft_background
+from tests.conftest import blurry_image, bokeh_image, landscape_image, sharp_image, soft_background
 
 THRESHOLD = 80.0
 W, H = 800, 600
@@ -222,7 +222,12 @@ def test_tiny_image_falls_back_to_global_rule(analyzer, img, flag):
 
 
 def test_metrics_are_finite_floats(analyzer):
-    for img in (sharp_image(), blurry_image(), bokeh_image((300, 200, 200, 200), flat=True)):
+    for img in (
+        sharp_image(),
+        blurry_image(),
+        bokeh_image((300, 200, 200, 200), flat=True),
+        sharp_image(60, 40),
+    ):
         metrics = analyze(analyzer, img).metrics
         assert set(metrics) == {
             "laplacian_variance",
@@ -232,8 +237,54 @@ def test_metrics_are_finite_floats(analyzer):
             "focus_ratio",
             "subject_tiles",
             "sharp_tiles",
+            "top_detail_ratio",
+            "top_brightness_gain",
         }
         assert all(isinstance(v, float) and np.isfinite(v) for v in metrics.values())
+
+
+# --- landscapes: smooth sky over a sharp scene ----------------------------------------
+
+
+SHARP_REGION = {"min_tile_contrast": 10, "min_sharp_region_area": 0.05, "min_sharp_region_sharpness": 130}
+
+
+def test_smooth_sky_dilutes_sharp_area_by_default(analyzer):
+    """The bug the sharp-region rule fixes: textureless sky counts as 'not sharp'."""
+    result = analyze(analyzer, landscape_image())
+    assert result.metrics["sharp_area"] < 0.4
+    assert result.flag != "SHARP"
+
+
+def test_sharp_region_rule_labels_landscape_sharp():
+    analyzer = BlurAnalyzer(BlurSettings(threshold=THRESHOLD, **SHARP_REGION))
+    result = analyze(analyzer, landscape_image())
+    assert result.flag == "SHARP"
+    assert result.score > 0.5
+
+
+def test_sharp_region_rule_is_off_by_default():
+    assert BlurSettings().min_sharp_region_area == 1.0
+
+
+@pytest.mark.parametrize(
+    "img",
+    [
+        pytest.param(cv2.GaussianBlur(sharp_image(), (0, 0), 3), id="uniformly-soft"),
+        pytest.param(soft_background(), id="out-of-focus-scene"),
+        pytest.param(cv2.GaussianBlur(landscape_image(), (0, 0), 3), id="blurred-landscape"),
+    ],
+)
+def test_sharp_region_rule_still_flags_blurry_photos(img):
+    analyzer = BlurAnalyzer(BlurSettings(threshold=THRESHOLD, **SHARP_REGION))
+    assert analyze(analyzer, img).flag == "BLURRY"
+
+
+def test_scene_metrics_detect_open_sky(analyzer):
+    sky = analyze(analyzer, landscape_image()).metrics
+    assert sky["top_detail_ratio"] < 0.5 and sky["top_brightness_gain"] > 0
+    texture = analyze(analyzer, sharp_image()).metrics
+    assert texture["top_detail_ratio"] > 0.5
 
 
 # --- helpers -----------------------------------------------------------------------

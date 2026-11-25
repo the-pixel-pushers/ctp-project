@@ -11,6 +11,8 @@ image is split into a grid of tiles and we ask *where* the sharpness is:
   specks on a soft frame don't count) unless it is big (`confident_subject_tiles`). Position and
   size of the subject don't matter. A single sharp tile (the only one in the frame) also counts
   when it stands out very strongly (`min_single_tile_focus_ratio`).
+- SHARP (sharp-region rule, off by default): a large enough, clearly sharp cluster while the rest of
+  the frame is merely textureless (open sky, calm water, snow). Enabled for landscapes.
 - BLURRY: nothing is clearly in focus (camera shake, motion blur, missed focus).
 
 Flat tiles (sky, plain walls, studio backdrops) carry no focus information and are ignored.
@@ -66,6 +68,20 @@ def tile_stats(
     return sharpness, contrast
 
 
+def scene_metrics(gray: np.ndarray, laplacian: np.ndarray) -> dict[str, float]:
+    """Top-third vs bottom-third detail and brightness. Independent of tuning; a smooth, brighter
+    top above a detailed bottom is the signature of open sky (used for landscape suggestions)."""
+    height = gray.shape[0]
+    third = max(1, height // 3)
+    top, bottom = slice(0, third), slice(height - third, height)
+    top_detail = float(laplacian[top].var())
+    bottom_detail = float(laplacian[bottom].var())
+    return {
+        "top_detail_ratio": round(top_detail / max(bottom_detail, BACKGROUND_FLOOR), 4),
+        "top_brightness_gain": round(float(gray[top].mean()) - float(gray[bottom].mean()), 2),
+    }
+
+
 def largest_cluster(mask: np.ndarray) -> np.ndarray:
     """Boolean mask of the largest 8-connected True region (all False if there is none)."""
     if not mask.any():
@@ -88,16 +104,17 @@ class BlurAnalyzer(Analyzer):
             gray = cv2.GaussianBlur(gray, (3, 3), 0)
         laplacian = cv2.Laplacian(gray, cv2.CV_64F)
         global_variance = float(laplacian.var())
+        scene = scene_metrics(gray, laplacian)
 
         shape = grid_shape(*gray.shape, s.grid_cols)
         if shape is None:
-            return self._global_result(global_variance)
+            return self._global_result(global_variance, scene)
 
         sharpness, contrast = tile_stats(gray, laplacian, *shape)
         informative = contrast >= s.min_tile_contrast
         informative_count = int(informative.sum())
         if informative_count == 0:
-            return self._global_result(global_variance)
+            return self._global_result(global_variance, scene)
 
         sharp = informative & (sharpness >= s.threshold)
         subject = largest_cluster(sharp)
@@ -116,6 +133,14 @@ class BlurAnalyzer(Analyzer):
         focus_ratio = subject_sharpness / max(background_sharpness, BACKGROUND_FLOOR)
 
         if sharp_area >= s.sharp_area_ratio:
+            flag, score_basis = "SHARP", subject_sharpness
+        elif (
+            subject_tiles / informative_count >= s.min_sharp_region_area
+            and subject_sharpness >= s.min_sharp_region_sharpness
+            and cluster_share >= s.min_subject_cluster_share
+        ):
+            # A clearly sharp region, with the rest of the frame merely textureless (sky, water),
+            # not defocused. Checked before SHALLOW_FOCUS so smooth skies aren't read as bokeh.
             flag, score_basis = "SHARP", subject_sharpness
         elif (
             (
@@ -143,10 +168,11 @@ class BlurAnalyzer(Analyzer):
                 "focus_ratio": round(focus_ratio, 2),
                 "subject_tiles": float(subject_tiles),
                 "sharp_tiles": float(total_sharp),
+                **scene,
             },
         )
 
-    def _global_result(self, variance: float) -> AnalysisResult:
+    def _global_result(self, variance: float, scene: dict[str, float]) -> AnalysisResult:
         """Old whole-image rule, for images the tile grid can't say anything about."""
         is_sharp = variance >= self.settings.threshold
         return AnalysisResult(
@@ -160,5 +186,6 @@ class BlurAnalyzer(Analyzer):
                 "focus_ratio": 1.0,
                 "subject_tiles": 0.0,
                 "sharp_tiles": 0.0,
+                **scene,
             },
         )

@@ -31,5 +31,12 @@ class BlurSettings(BaseSettings):
     # The SHALLOW_FOCUS subject must also be sharp in absolute terms (mean tile Laplacian variance).
     # A coarse guard only: keep it well below real in-focus subjects (~125-140 in the samples).
     min_shallow_subject_sharpness: float = 100.0
+    # "Sharp region" rule (off by default at 1.0): the photo is SHARP when its largest sharp cluster
+    # covers at least this share of the informative tiles and is itself clearly sharp. For scenes
+    # where big smooth areas (sky, calm water, snow) have no detail to be sharp in the first place,
+    # e.g. landscapes; enabled by the "Sky & smooth areas" slider.
+    min_sharp_region_area: float = 1.0
+    # Mean tile sharpness the cluster needs for the sharp-region rule.
+    min_sharp_region_sharpness: float = 130.0
     # Light 3x3 Gaussian before the Laplacian so sensor noise / JPEG artifacts don't read as detail.
     denoise: bool = True

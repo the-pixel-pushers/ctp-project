@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronDown, Loader2, RefreshCw, RotateCcw, SlidersHorizontal } from 'lucide-react'
+import { ChevronDown, Loader2, RefreshCw, RotateCcw, SlidersHorizontal, Sparkles } from 'lucide-react'
 import { activePreset, currentLevel, type Tuning } from '../lib/tuning'
 
 interface TuningPanelProps {
@@ -8,6 +8,8 @@ interface TuningPanelProps {
   photoCount: number
   isReanalyzing: boolean
   onReanalyze: () => void
+  /** Preset the batch suggestion currently recommends; its chip gets a marker. */
+  suggestedPresetId?: string | null
 }
 
 function ResetButton({ onClick, title }: { onClick: () => void; title: string }) {
@@ -23,7 +25,13 @@ function ResetButton({ onClick, title }: { onClick: () => void; title: string })
   )
 }
 
-export function TuningPanel({ tuning, photoCount, isReanalyzing, onReanalyze }: TuningPanelProps) {
+export function TuningPanel({
+  tuning,
+  photoCount,
+  isReanalyzing,
+  onReanalyze,
+  suggestedPresetId = null,
+}: TuningPanelProps) {
   const { catalog, values, overrides, error } = tuning
   const [open, setOpen] = useState(false)
 
@@ -70,13 +78,16 @@ export function TuningPanel({ tuning, photoCount, isReanalyzing, onReanalyze }: 
                 <button
                   key={p.id}
                   onClick={() => tuning.applyPreset(p)}
-                  title={p.description}
-                  className={`px-3 py-1.5 rounded-full text-[12px] font-medium border transition-colors cursor-pointer ${
+                  title={suggestedPresetId === p.id ? `Suggested for this batch. ${p.description}` : p.description}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-medium border transition-colors cursor-pointer ${
                     preset?.id === p.id
                       ? 'bg-white text-black border-white'
-                      : 'border-white/[0.08] text-neutral-400 hover:text-white hover:border-white/[0.2]'
+                      : suggestedPresetId === p.id
+                        ? 'border-violet-400/50 text-violet-200 hover:text-white hover:border-violet-300'
+                        : 'border-white/[0.08] text-neutral-400 hover:text-white hover:border-white/[0.2]'
                   }`}
                 >
+                  {suggestedPresetId === p.id && <Sparkles className="w-3 h-3" strokeWidth={1.5} />}
                   {p.label}
                 </button>
               ))}

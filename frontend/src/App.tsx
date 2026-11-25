@@ -1,22 +1,24 @@
-import { useMemo, useState } from 'react'
+import { useRef, useState } from 'react'
 import { Aperture, Upload, Images, Sparkles, AlertCircle, X } from 'lucide-react'
 import { UploadView } from './components/UploadView'
 import { GalleryView } from './components/GalleryView'
 import { TuningPanel } from './components/TuningPanel'
-import { analysisFields, cullPhotos } from './lib/api'
+import { PresetSuggestionBanner, type SuggestionState } from './components/PresetSuggestionBanner'
+import { analysisFields, cullPhotos, suggestPreset, type AnalysisFields } from './lib/api'
 import type { Photo } from './lib/photos'
-import {
-  activePreset,
-  looksLikeBokehSession,
-  overridesOf,
-  useTuning,
-  valuesForPreset,
-  type TuningValues,
-} from './lib/tuning'
+import { overridesOf, useTuning, valuesEqual, valuesForPreset, type TuningValues } from './lib/tuning'
 
 type Tab = 'upload' | 'gallery'
 
-const BOKEH_PRESET_ID = 'portrait_bokeh'
+/** What Undo needs after accepting a suggestion, plus the values the preset applied. */
+interface UndoSnapshot {
+  values: TuningValues
+  fields: Map<string, AnalysisFields>
+  appliedValues: TuningValues
+}
+
+const sameFlags = (a: Record<string, string>, b: Record<string, string>) =>
+  Object.keys(a).length === Object.keys(b).length && Object.entries(a).every(([k, v]) => b[k] === v)
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('upload')
@@ -24,16 +26,37 @@ function App() {
   const tuning = useTuning()
   const [isReanalyzing, setIsReanalyzing] = useState(false)
   const [reanalyzeError, setReanalyzeError] = useState<string | null>(null)
-  const [suggestionDismissed, setSuggestionDismissed] = useState(false)
+  const [suggestion, setSuggestion] = useState<SuggestionState | null>(null)
+  const [undoSnapshot, setUndoSnapshot] = useState<UndoSnapshot | null>(null)
+  // Bumped on every import so a late suggestion response for an older batch is ignored.
+  const suggestionRequest = useRef(0)
 
-  const handleAnalyzed = (newPhotos: Photo[]) => {
+  const handleAnalyzed = (newPhotos: Photo[], overridesUsed: TuningValues) => {
     setPhotos((prev) => [...newPhotos, ...prev])
     setActiveTab('gallery')
+    const request = ++suggestionRequest.current
+    setSuggestion(null)
+    setUndoSnapshot(null)
+    // The suggestion rules are calibrated on default-tuning metrics; a batch analyzed with a
+    // deliberate preset or slider change is left alone.
+    if (Object.keys(overridesUsed).length > 0) return
+    suggestPreset(newPhotos)
+      .then((s) => {
+        if (s && request === suggestionRequest.current) setSuggestion({ kind: 'offer', suggestion: s })
+      })
+      .catch(() => {
+        /* a suggestion is optional: no banner */
+      })
   }
 
-  /** Re-run every photo in the gallery through the backend with the given (or current) overrides. */
-  const reanalyze = async (overrides: TuningValues = tuning.overrides) => {
-    if (isReanalyzing || photos.length === 0) return
+  /**
+   * Re-run every photo in the gallery through the backend with the given (or current) overrides.
+   * Resolves to how many photos' flags changed, or null if nothing was re-analyzed.
+   */
+  const reanalyze = async (
+    overrides: TuningValues = tuning.overrides
+  ): Promise<{ changed: number; total: number } | null> => {
+    if (isReanalyzing || photos.length === 0) return null
     setIsReanalyzing(true)
     setReanalyzeError(null)
     const targets = photos
@@ -42,34 +65,69 @@ function App() {
         targets.map((p) => p.file),
         overrides
       )
-      const updates = new Map<string, Pick<Photo, 'issues' | 'flags' | 'metrics'>>()
+      const updates = new Map<string, AnalysisFields>()
       let failed = 0
+      let changed = 0
       results.forEach((result, i) => {
-        if (result.status === 'success') updates.set(targets[i].id, analysisFields(result.analyses))
-        else failed++
+        if (result.status !== 'success') {
+          failed++
+          return
+        }
+        const fields = analysisFields(result.analyses)
+        if (!sameFlags(targets[i].flags, fields.flags)) changed++
+        updates.set(targets[i].id, fields)
       })
       // Merge by id: photos may have been liked or deleted while the request was in flight.
       setPhotos((prev) => prev.map((p) => (updates.has(p.id) ? { ...p, ...updates.get(p.id)! } : p)))
       if (failed > 0) setReanalyzeError(`${failed} photo${failed !== 1 ? 's' : ''} could not be re-analyzed`)
+      return { changed, total: updates.size }
     } catch (e) {
       setReanalyzeError(e instanceof Error ? e.message : 'Re-analysis failed')
+      return null
     } finally {
       setIsReanalyzing(false)
     }
   }
 
-  // Suggest the bokeh preset only while on the defaults, so it never overrides a deliberate choice.
-  const bokehPreset = tuning.catalog?.presets.find((p) => p.id === BOKEH_PRESET_ID)
-  const onDefaults =
-    tuning.catalog !== null && activePreset(tuning.catalog, tuning.values)?.id === tuning.catalog.default_preset
-  const bokehSignal = useMemo(() => looksLikeBokehSession(photos), [photos])
-  const suggestion = bokehPreset && onDefaults && !suggestionDismissed ? bokehSignal : null
+  const presetLabel = (id: string) => tuning.catalog?.presets.find((p) => p.id === id)?.label ?? id
 
-  const acceptSuggestion = () => {
-    if (!tuning.catalog || !bokehPreset) return
-    tuning.applyPreset(bokehPreset)
-    reanalyze(overridesOf(tuning.catalog, valuesForPreset(tuning.catalog, bokehPreset)))
+  const acceptPreset = async (presetId: string) => {
+    const catalog = tuning.catalog
+    const preset = catalog?.presets.find((p) => p.id === presetId)
+    if (!catalog || !preset || isReanalyzing) return
+    const request = suggestionRequest.current
+    const snapshot: UndoSnapshot = {
+      values: tuning.values,
+      fields: new Map(photos.map((p) => [p.id, { issues: p.issues, flags: p.flags, metrics: p.metrics }])),
+      appliedValues: valuesForPreset(catalog, preset),
+    }
+    tuning.applyPreset(preset)
+    const outcome = await reanalyze(overridesOf(catalog, snapshot.appliedValues))
+    if (!outcome) {
+      tuning.restoreValues(snapshot.values) // labels weren't updated, so don't leave settings changed
+      return
+    }
+    if (request !== suggestionRequest.current) return // a new import replaced this suggestion
+    setUndoSnapshot(snapshot)
+    setSuggestion({ kind: 'applied', presetId, ...outcome })
   }
+
+  const undoPreset = () => {
+    if (!undoSnapshot) return
+    const { values, fields } = undoSnapshot
+    tuning.restoreValues(values)
+    setPhotos((prev) => prev.map((p) => (fields.has(p.id) ? { ...p, ...fields.get(p.id)! } : p)))
+    setUndoSnapshot(null)
+    setSuggestion(null)
+  }
+
+  const dismissSuggestion = () => {
+    setSuggestion(null)
+    setUndoSnapshot(null)
+  }
+
+  // Undo only makes sense while the accepted preset is still what's applied.
+  const canUndo = undoSnapshot !== null && valuesEqual(undoSnapshot.appliedValues, tuning.values)
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] noise-bg flex flex-col relative overflow-hidden">
@@ -136,30 +194,19 @@ function App() {
             photoCount={photos.length}
             isReanalyzing={isReanalyzing}
             onReanalyze={() => reanalyze()}
+            suggestedPresetId={suggestion?.kind === 'offer' ? suggestion.suggestion.preset_id : null}
           />
 
           {suggestion && (
-            <div className="mb-6 flex flex-wrap items-center gap-3 px-4 py-3 rounded-xl border border-violet-400/20 bg-violet-500/[0.06] text-violet-200 text-[13px]">
-              <Sparkles className="w-4 h-4 flex-shrink-0" strokeWidth={1.5} />
-              <span className="flex-1 min-w-[16rem]">
-                Looks like a bokeh session: {suggestion.count} of {suggestion.total} photos read as blurry but have a
-                distinct sharp subject. Switch to “{bokehPreset?.label}” and re-analyze?
-              </span>
-              <button
-                onClick={acceptSuggestion}
-                disabled={isReanalyzing}
-                className="px-3 py-1.5 rounded-full bg-white text-black text-[12px] font-semibold cursor-pointer disabled:opacity-50"
-              >
-                Switch &amp; re-analyze
-              </button>
-              <button
-                onClick={() => setSuggestionDismissed(true)}
-                aria-label="Dismiss suggestion"
-                className="p-1 rounded hover:bg-white/[0.06] cursor-pointer"
-              >
-                <X className="w-3.5 h-3.5" strokeWidth={1.5} />
-              </button>
-            </div>
+            <PresetSuggestionBanner
+              state={suggestion}
+              labelFor={presetLabel}
+              isReanalyzing={isReanalyzing}
+              canUndo={canUndo}
+              onAccept={acceptPreset}
+              onUndo={undoPreset}
+              onDismiss={dismissSuggestion}
+            />
           )}
 
           {reanalyzeError && (

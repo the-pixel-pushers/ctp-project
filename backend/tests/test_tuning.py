@@ -97,6 +97,7 @@ def test_override_changes_result_for_one_request_only(client):
         {"blur": {"threshold": True}},  # bool is not a number
         {"blur": {"threshold": 250}},  # above min_shallow_subject_sharpness
         {"blur": {"min_subject_tiles": 20}},  # above confident_subject_tiles
+        {"blur": {"min_sharp_region_sharpness": 60}},  # below threshold
         [1, 2],  # not an object
     ],
 )

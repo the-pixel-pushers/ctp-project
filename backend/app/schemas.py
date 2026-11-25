@@ -27,3 +27,28 @@ class CullBatchResponse(BaseModel):
     batch_id: UUID
     total_processed: int
     results: list[ImageResult]
+
+
+class PhotoMetrics(BaseModel):
+    """One analyzed photo as the client holds it: flag and metrics per analyzer name."""
+
+    flags: dict[str, str] = Field(default_factory=dict)
+    metrics: dict[str, dict[str, float]] = Field(default_factory=dict)
+
+
+class SuggestRequest(BaseModel):
+    photos: list[PhotoMetrics] = Field(max_length=1000)
+
+
+class PresetAlternative(BaseModel):
+    preset_id: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class PresetSuggestion(BaseModel):
+    preset_id: str
+    confidence: float = Field(ge=0.0, le=1.0, description="Share of the batch matching the preset's scene")
+    matched: int
+    total: int
+    reasons: list[str]
+    alternatives: list[PresetAlternative] = Field(default_factory=list)
