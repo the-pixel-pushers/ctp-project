@@ -3,8 +3,14 @@ import numpy as np
 import pytest
 
 from app.analyzers.blur import BlurAnalyzer, BlurSettings
-from app.analyzers.blur.analyzer import grid_shape, largest_cluster, normalize_score, tile_stats
-from app.imaging import PreparedImage
+from app.analyzers.blur.analyzer import (
+    grid_shape,
+    largest_cluster,
+    normalize_score,
+    reblur_sharpness,
+    tile_stats,
+)
+from app.imaging import Face, PreparedImage
 from tests.conftest import blurry_image, bokeh_image, landscape_image, sharp_image, soft_background
 
 THRESHOLD = 80.0
@@ -239,6 +245,9 @@ def test_metrics_are_finite_floats(analyzer):
             "sharp_tiles",
             "top_detail_ratio",
             "top_brightness_gain",
+            "reblur_sharpness",
+            "edge_coverage",
+            "noise_level",
         }
         assert all(isinstance(v, float) and np.isfinite(v) for v in metrics.values())
 
@@ -278,6 +287,66 @@ def test_sharp_region_rule_is_off_by_default():
 def test_sharp_region_rule_still_flags_blurry_photos(img):
     analyzer = BlurAnalyzer(BlurSettings(threshold=THRESHOLD, **SHARP_REGION))
     assert analyze(analyzer, img).flag == "BLURRY"
+
+
+# --- re-blur rescue: crisp edges, little texture -------------------------------------
+
+
+def smooth_crisp_scene() -> np.ndarray:
+    """Smooth hills and sky with crisp outlines but almost no fine texture, the kind of real photo the
+    tile analysis called BLURRY (smooth landscapes, dunes, heavy JPEG)."""
+    yy, xx = np.indices((H, W), dtype=np.float64)
+    img = 150 + 0.06 * yy  # sky gradient
+    for i, (amp, period, base, shade) in enumerate(
+        [(60, 230, 330, 95), (40, 160, 420, 70), (30, 120, 500, 45)]
+    ):
+        ridge = base + amp * np.sin(xx / period + i)
+        img = np.where(yy > ridge, shade + 0.02 * (yy - ridge), img)  # crisp ridge line, smooth fill
+    return cv2.cvtColor(np.clip(img, 0, 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+
+
+def test_reblur_sharpness_orders_by_blur():
+    # (Not on the 8 px checkerboard: a periodic pattern near the 9 px re-blur length misleads it.)
+    gray = cv2.cvtColor(smooth_crisp_scene(), cv2.COLOR_BGR2GRAY)
+    blurred = [gray] + [cv2.GaussianBlur(gray, (0, 0), s) for s in (1.5, 3)]
+    values = [reblur_sharpness(g) for g in blurred]
+    assert values[0] > values[1] > values[2]
+
+
+def test_reblur_sharpness_ignores_noise_without_edges():
+    """Faint noise on soft shapes is pixel-level 'crisp' but not an edge: no edges -> 0."""
+    assert reblur_sharpness(cv2.cvtColor(soft_background(), cv2.COLOR_BGR2GRAY)) == 0.0
+
+
+def test_smooth_scene_with_crisp_edges_is_rescued(analyzer):
+    img = smooth_crisp_scene()
+    tiles_only = BlurAnalyzer(BlurSettings(threshold=THRESHOLD, min_reblur_sharpness=0))
+    assert analyze(tiles_only, img).flag == "BLURRY"  # the bug: little texture reads as blurry
+    result = analyze(analyzer, img)
+    assert result.flag == "SHARP"
+    assert result.score > 0.5
+    assert result.metrics["reblur_sharpness"] >= analyzer.settings.min_reblur_sharpness
+
+
+@pytest.mark.parametrize("sigma", [2.5, 4.0])
+def test_blurred_smooth_scene_stays_blurry(analyzer, sigma):
+    result = analyze(analyzer, cv2.GaussianBlur(smooth_crisp_scene(), (0, 0), sigma))
+    assert result.flag == "BLURRY"
+    assert result.score < 0.5
+
+
+def test_rescue_skipped_on_very_noisy_image(analyzer):
+    img = smooth_crisp_scene().astype(np.float64)
+    noise = np.random.default_rng(0).normal(0, 9, img.shape[:2])[..., None]
+    noisy = np.clip(cv2.GaussianBlur(img, (0, 0), 3) + noise, 0, 255).astype(np.uint8)
+    result = analyze(analyzer, noisy)
+    assert result.metrics["noise_level"] > 5
+    assert result.flag == "BLURRY"
+
+
+def test_rescue_can_be_disabled():
+    analyzer = BlurAnalyzer(BlurSettings(threshold=THRESHOLD, min_reblur_sharpness=0))
+    assert analyze(analyzer, smooth_crisp_scene()).flag == "BLURRY"
 
 
 def test_scene_metrics_detect_open_sky(analyzer):
@@ -326,3 +395,54 @@ def test_largest_cluster_empty_mask():
 )
 def test_normalize_score(variance, expected):
     assert normalize_score(variance, THRESHOLD) == pytest.approx(expected, abs=1e-3)
+
+
+# --- face override (Portrait preset) -----------------------------------------------
+
+
+def with_face(img, box):
+    """PreparedImage whose detected faces are fixed (the cached property is pre-filled), so the
+    override logic is tested without depending on the face model recognising synthetic pixels."""
+    image = PreparedImage(img)
+    image.__dict__["faces"] = [Face(*box, score=0.9)] if box else []
+    return image
+
+
+FACE_BOX = (300, 200, 200, 200)  # matches the sharp patch in bokeh_image((300, 200, 200, 200))
+
+
+def test_face_override_is_off_by_default(analyzer):
+    image = with_face(soft_background(), FACE_BOX)
+    assert analyzer.analyze(image).flag == "BLURRY"
+    assert "face_sharpness" not in analyzer.analyze(image).metrics
+
+
+def test_sharp_face_turns_blurry_into_shallow_focus():
+    # A sharp face on a frame that's otherwise soft at tile level (smooth skin, bokeh) is a portrait.
+    img = soft_background()
+    img[200:400, 300:500] = sharp_image(200, 200)
+    analyzer = BlurAnalyzer(BlurSettings(threshold=1e6, min_reblur_sharpness=0, face_sharpness=10))
+    result = analyzer.analyze(with_face(img, FACE_BOX))
+    assert result.flag == "SHALLOW_FOCUS"
+    assert result.metrics["face_sharpness"] >= 10
+    assert result.score >= 0.5
+
+
+def test_soft_face_makes_sharp_frame_blurry():
+    # Everything around the face is sharp (e.g. crisp bokeh edges, background in focus), but the face isn't.
+    img = sharp_image()
+    img[200:400, 300:500] = soft_background(200, 200)
+    analyzer = BlurAnalyzer(BlurSettings(face_sharpness=10))
+    assert analyzer.analyze(PreparedImage(img)).flag == "SHARP"  # sanity check: no face given yet
+    result = analyzer.analyze(with_face(img, FACE_BOX))
+    assert result.flag == "BLURRY"
+    assert result.score < 0.5
+
+
+def test_no_face_or_tiny_face_keeps_tile_verdict():
+    analyzer = BlurAnalyzer(BlurSettings(face_sharpness=10))
+    img = bokeh_image((300, 200, 200, 200))
+    expected = BlurAnalyzer().analyze(PreparedImage(img)).flag
+    assert analyzer.analyze(with_face(img, None)).flag == expected
+    tiny = (10, 10, 20, 20)  # under MIN_FACE_WIDTH of an 800 px frame: a background person / false hit
+    assert analyzer.analyze(with_face(img, tiny)).flag == expected

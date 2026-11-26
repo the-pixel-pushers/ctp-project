@@ -169,6 +169,24 @@ PARAMS: dict[str, list[ParamSpec]] = {
             400,
             5,
         ),
+        _p(
+            "min_reblur_sharpness",
+            "Edge crispness rescue",
+            "A BLURRY photo whose edges stay this crisp (0-1) is SHARP after all (0 = off).",
+            "float",
+            0.0,
+            0.9,
+            0.01,
+        ),
+        _p(
+            "face_sharpness",
+            "Face sharpness",
+            "When a face is found, it must be at least this sharp (Laplacian variance); 0 = off.",
+            "float",
+            0.0,
+            60.0,
+            0.5,
+        ),
     ],
     "overexposure": [
         _p(
@@ -242,14 +260,32 @@ SLIDERS: list[SliderSpec] = [
     SliderSpec(
         id="sharpness_strictness",
         label="Sharpness strictness",
-        description="How much detail a tile needs to count as sharp.",
+        description="How much detail and how crisp the edges must be to count as sharp.",
         default_level=2,
+        # min_reblur_sharpness: stricter levels rescue fewer smooth photos but catch more camera shake
+        # (noisy calibration set: 0.55 caught ~69% of 7 px shake and kept 97.5% of good photos;
+        # 0.61 caught ~83% and kept 94.7%).
         levels=[
-            _level("Very lenient", blur={"threshold": 50, "min_shallow_subject_sharpness": 70}),
-            _level("Lenient", blur={"threshold": 65, "min_shallow_subject_sharpness": 85}),
-            _level("Default", blur={"threshold": 80, "min_shallow_subject_sharpness": 100}),
-            _level("Strict", blur={"threshold": 100, "min_shallow_subject_sharpness": 125}),
-            _level("Very strict", blur={"threshold": 130, "min_shallow_subject_sharpness": 160}),
+            _level(
+                "Very lenient",
+                blur={"threshold": 50, "min_shallow_subject_sharpness": 70, "min_reblur_sharpness": 0.50},
+            ),
+            _level(
+                "Lenient",
+                blur={"threshold": 65, "min_shallow_subject_sharpness": 85, "min_reblur_sharpness": 0.53},
+            ),
+            _level(
+                "Default",
+                blur={"threshold": 80, "min_shallow_subject_sharpness": 100, "min_reblur_sharpness": 0.56},
+            ),
+            _level(
+                "Strict",
+                blur={"threshold": 100, "min_shallow_subject_sharpness": 125, "min_reblur_sharpness": 0.60},
+            ),
+            _level(
+                "Very strict",
+                blur={"threshold": 130, "min_shallow_subject_sharpness": 160, "min_reblur_sharpness": 0.64},
+            ),
         ],
     ),
     SliderSpec(
@@ -355,6 +391,21 @@ SLIDERS: list[SliderSpec] = [
             ),
         ],
     ),
+    # Calibrated on 67 hand-labeled bokeh/portrait photos (Test_photos/bokeh): sharp faces read
+    # 11.8-150, missed-focus faces 1.5-8.8 with one at 12.1. At 10, Portrait errors fell from 13 to 6;
+    # five of those have no detectable face, one soft face reads 12.1. Photos without a face are judged exactly as before.
+    SliderSpec(
+        id="face_focus",
+        label="Face focus",
+        description="In portraits, judge sharpness on the detected face instead of the sharpest area.",
+        default_level=0,
+        levels=[
+            _level("Off", blur={"face_sharpness": 0}),
+            _level("Lenient", blur={"face_sharpness": 8}),
+            _level("On", blur={"face_sharpness": 10}),
+            _level("Strict", blur={"face_sharpness": 13}),
+        ],
+    ),
 ]
 
 _DEFAULT_LEVELS = {s.id: s.default_level for s in SLIDERS}
@@ -389,9 +440,11 @@ PRESETS: list[PresetSpec] = [
     _preset(
         "portrait_bokeh",
         "Portrait / bokeh",
-        "Small in-focus subject on a soft background: finer grid, clear separation required.",
+        "Subject on a soft background: judged on the face when one is found, else a finer tile grid.",
         subject_size=3,
-        background_separation=3,
+        face_focus=2,
+        # Default separation (20x), not High (30x): on 28 hand-labeled bokeh photos, 30x rejected a
+        # sharp portrait at 20.8x while no blurry photo got through at 20x (closest: 17.2x).
         sharp_area=3,
     ),
     _preset(

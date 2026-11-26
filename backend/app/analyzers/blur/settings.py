@@ -38,5 +38,16 @@ class BlurSettings(BaseSettings):
     min_sharp_region_area: float = 1.0
     # Mean tile sharpness the cluster needs for the sharp-region rule.
     min_sharp_region_sharpness: float = 130.0
+    # Re-blur sharpness (edge crispness, 0-1) at or above which a photo the tile analysis calls
+    # BLURRY is rescued as SHARP: crisp edges with little texture (smooth landscapes, heavy JPEG).
+    # Calibrated on real landscapes vs blurred copies with sensor noise added: 0.56 kept ~97% of
+    # good photos while catching ~90% of noisy defocus (sigma 1.5), ~100% of sigma 2.5 and ~72% of
+    # 7 px camera shake. 0 disables the rescue.
+    min_reblur_sharpness: float = 0.56
+    # Face-aware subject (off at 0, enabled by the Portrait preset). When a face is detected, it is the
+    # subject: the photo is BLURRY if the face's Laplacian variance is below this, and a tile-level
+    # BLURRY becomes SHALLOW_FOCUS if it is at or above it. Calibrated on 67 hand-labeled bokeh and
+    # portrait photos: sharp faces read 11.8-150, missed-focus faces 1.5-8.8 (one outlier at 12.1).
+    face_sharpness: float = 0.0
     # Light 3x3 Gaussian before the Laplacian so sensor noise / JPEG artifacts don't read as detail.
     denoise: bool = True

@@ -30,3 +30,11 @@ def test_gray_is_computed_once():
 def test_invalid_bytes_raise(data):
     with pytest.raises(ImageDecodeError):
         prepare_image(data, 1000)
+
+
+def test_face_detection_runs_and_returns_boxes_inside_the_frame():
+    # Synthetic images have no faces; this checks the bundled model loads and the output is sane.
+    image = PreparedImage(sharp_image())
+    for f in image.faces:
+        assert f.x >= 0 and f.y >= 0 and f.x + f.width <= 800 and f.y + f.height <= 600
+    assert image.faces is image.faces  # cached

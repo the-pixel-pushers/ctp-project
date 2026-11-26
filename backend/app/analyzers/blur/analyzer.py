@@ -13,7 +13,12 @@ image is split into a grid of tiles and we ask *where* the sharpness is:
   when it stands out very strongly (`min_single_tile_focus_ratio`).
 - SHARP (sharp-region rule, off by default): a large enough, clearly sharp cluster while the rest of
   the frame is merely textureless (open sky, calm water, snow). Enabled for landscapes.
-- BLURRY: nothing is clearly in focus (camera shake, motion blur, missed focus).
+- Face override (off by default, Portrait preset): when a face is detected, its sharpness decides.
+  Smooth, dim skin reads as soft at tile level, while bright bokeh discs read as sharp, so without
+  this the brightest bokeh patch becomes "the subject" and the real one is ignored.
+- BLURRY: nothing is clearly in focus (camera shake, motion blur, missed focus), *and* the edges
+  are soft under the re-blur measure. A tile-level BLURRY whose edges stay crisp (smooth scene with
+  little texture, heavy JPEG) is rescued as SHARP (`min_reblur_sharpness`).
 
 Flat tiles (sky, plain walls, studio backdrops) carry no focus information and are ignored.
 Images too small for the grid, or with no informative tiles, fall back to the global rule.
@@ -26,6 +31,7 @@ from app.analyzers.base import AnalysisResult, Analyzer
 from app.analyzers.blur.settings import BlurSettings
 from app.imaging import PreparedImage
 
+MIN_FACE_WIDTH = 0.05  # faces narrower than this share of the frame are background people/false hits
 MIN_TILE_PX = 8  # below this a tile has too few pixels for a meaningful variance
 BACKGROUND_FLOOR = 1.0  # avoids dividing by ~0 when the background is perfectly smooth
 
@@ -82,6 +88,90 @@ def scene_metrics(gray: np.ndarray, laplacian: np.ndarray) -> dict[str, float]:
     }
 
 
+REBLUR_KERNEL = 9  # box blur length for the re-blur measure (Crete et al. 2007)
+EDGE_SMOOTH_SIGMA = 1.0  # light smoothing that removes sensor noise but keeps (even blurred) edges
+EDGE_MIN_STEP = 3.0  # gray levels per pixel the smoothed image must change by to count as an edge
+# The rescue needs edges spread over the frame: a tile "has edges" when >= 2% of its pixels are
+# edge pixels, and at least this share of the 12-column grid's tiles must. A few crisp specks on an
+# otherwise edgeless soft frame don't make a sharp photo. On the 133 hand-checked landscapes the 1st
+# percentile was 0.33; isolated-speck test frames sit at 0.04-0.22.
+EDGE_TILE_PIXEL_SHARE = 0.02
+MIN_EDGE_COVERAGE = 0.25
+COVERAGE_GRID_COLS = 12
+# Heavy sensor noise is crisp at the pixel level and survives the edge smoothing, so the rescue is
+# skipped above this estimated noise sigma (gray levels) and the tile verdict stands. The 133
+# hand-checked landscapes peaked at 2.5; a soft frame with sigma-8 noise reads 8.2.
+MAX_RESCUE_NOISE = 5.0
+_NOISE_KERNEL = np.array([[1, -2, 1], [-2, 4, -2], [1, -2, 1]], dtype=np.float64)
+_NOISE_KERNEL_NORM = 6.0  # sqrt of the kernel's sum of squares (36)
+
+
+def noise_sigma(gray: np.ndarray) -> float:
+    """Noise standard deviation from the Immerkaer (1996) operator, using the median response
+    (robust): edges and texture are a minority of pixels, so unlike the mean-based form they barely
+    move it. A richly textured sharp photo must not look 'noisy' and lose its rescue."""
+    height, width = gray.shape
+    if height < 3 or width < 3:
+        return 0.0
+    response = np.abs(cv2.filter2D(gray.astype(np.float64), -1, _NOISE_KERNEL))[1:-1, 1:-1]
+    return float(np.median(response) / (0.6745 * _NOISE_KERNEL_NORM))  # MAD -> sigma
+
+
+def edge_mask(gray: np.ndarray) -> np.ndarray:
+    """Pixels on a real edge (in either direction) that survives light smoothing."""
+    smooth = cv2.GaussianBlur(gray.astype(np.float64), (0, 0), EDGE_SMOOTH_SIGMA)
+    mask = np.zeros(gray.shape, dtype=bool)
+    mask[:-1, :] |= np.abs(np.diff(smooth, axis=0)) >= EDGE_MIN_STEP
+    mask[:, :-1] |= np.abs(np.diff(smooth, axis=1)) >= EDGE_MIN_STEP
+    return mask
+
+
+def edge_coverage(gray: np.ndarray) -> float:
+    """Share of grid tiles that contain real edges (1.0/0.0 for images too small for the grid)."""
+    mask = edge_mask(gray)
+    shape = grid_shape(*gray.shape, COVERAGE_GRID_COLS)
+    if shape is None:
+        return 1.0 if mask.any() else 0.0
+    rows, cols = shape
+    ys = np.linspace(0, gray.shape[0], rows + 1, dtype=int)
+    xs = np.linspace(0, gray.shape[1], cols + 1, dtype=int)
+    with_edges = sum(
+        mask[ys[r] : ys[r + 1], xs[c] : xs[c + 1]].mean() >= EDGE_TILE_PIXEL_SHARE
+        for r in range(rows)
+        for c in range(cols)
+    )
+    return with_edges / (rows * cols)
+
+
+def reblur_sharpness(gray: np.ndarray) -> float:
+    """Edge crispness that doesn't depend on how much texture a photo has, in [0, 1] (higher = sharper).
+
+    Re-blur the image along each axis and measure how much of the neighbour-pixel variation survives
+    (Crete et al. 2007, "The blur effect"). Crisp edges lose a lot when re-blurred; edges that are
+    already blurred barely change. Smooth scenes with a few crisp edges (hills against the sky,
+    dunes, long-exposure water) therefore still score high, unlike Laplacian variance, which only
+    measures the amount of fine detail.
+
+    Only real edges are measured: pixels whose step survives a light Gaussian smoothing. Sensor
+    noise is crisp at the pixel level and would otherwise make a blurred, noisy photo look sharp.
+    No edges at all (flat, or noise on soft shapes) gives 0."""
+    f = gray.astype(np.float64)
+    smooth = cv2.GaussianBlur(f, (0, 0), EDGE_SMOOTH_SIGMA)  # same smoothing as `edge_mask`
+    blur_effect = 0.0
+    for axis in (0, 1):
+        ksize = (1, REBLUR_KERNEL) if axis == 0 else (REBLUR_KERNEL, 1)  # cv2 takes (width, height)
+        reblurred = cv2.blur(f, ksize)
+        edges = np.abs(np.diff(smooth, axis=axis)) >= EDGE_MIN_STEP
+        d_orig = np.abs(np.diff(f, axis=axis))[edges]
+        d_blur = np.abs(np.diff(reblurred, axis=axis))[edges]
+        total = d_orig.sum()
+        if total <= 0:
+            return 0.0
+        lost = np.maximum(0.0, d_orig - d_blur).sum()
+        blur_effect = max(blur_effect, (total - lost) / total)
+    return 1.0 - blur_effect
+
+
 def largest_cluster(mask: np.ndarray) -> np.ndarray:
     """Boolean mask of the largest 8-connected True region (all False if there is none)."""
     if not mask.any():
@@ -98,13 +188,64 @@ class BlurAnalyzer(Analyzer):
         self.settings = settings or BlurSettings()
 
     def analyze(self, image: PreparedImage) -> AnalysisResult:
+        # On the raw gray: the analyzer's denoise step would soften the very edges being measured.
+        rb = reblur_sharpness(image.gray)
+        coverage = edge_coverage(image.gray)
+        noise = noise_sigma(image.gray)
+        extra = {
+            "reblur_sharpness": round(rb, 4),
+            "edge_coverage": round(coverage, 4),
+            "noise_level": round(noise, 2),
+        }
+        result = self._rescue(self._analyze_tiles(image, extra), rb, coverage, noise)
+        return self._face_override(image, result)
+
+    def _face_override(self, image: PreparedImage, result: AnalysisResult) -> AnalysisResult:
+        """In a portrait the face is the subject: if one is detected, its sharpness decides between
+        BLURRY and not. Runs after the re-blur rescue so crisp bokeh edges can't rescue a soft face."""
+        cutoff = self.settings.face_sharpness
+        if cutoff <= 0:
+            return result
+        width = image.proxy.shape[1]
+        face = next((f for f in image.faces if f.width >= MIN_FACE_WIDTH * width), None)
+        if face is None:
+            return result
+        gray = image.gray[face.y : face.y + face.height, face.x : face.x + face.width]
+        if self.settings.denoise:
+            gray = cv2.GaussianBlur(gray, (3, 3), 0)
+        face_sharpness = laplacian_variance(gray)
+        metrics = {**result.metrics, "face_sharpness": round(face_sharpness, 2)}
+        score = normalize_score(face_sharpness, cutoff)
+        if face_sharpness < cutoff:
+            return AnalysisResult(flag="BLURRY", score=score, metrics=metrics)
+        if result.flag == "BLURRY":
+            return AnalysisResult(flag="SHALLOW_FOCUS", score=score, metrics=metrics)
+        return AnalysisResult(flag=result.flag, score=result.score, metrics=metrics)
+
+    def _rescue(self, result: AnalysisResult, rb: float, coverage: float, noise: float) -> AnalysisResult:
+        """BLURRY needs both a weak tile verdict *and* soft edges. Edges that stay crisp under
+        re-blurring, spread over the frame, mean the photo is sharp, just low in texture (smooth
+        scenes, heavy JPEG). Not applied to very noisy images, where noise fakes crispness."""
+        cutoff = self.settings.min_reblur_sharpness
+        if (
+            result.flag != "BLURRY"
+            or cutoff <= 0
+            or rb < cutoff
+            or coverage < MIN_EDGE_COVERAGE
+            or noise > MAX_RESCUE_NOISE
+        ):
+            return result
+        score = round(min(1.0, 0.5 + 0.5 * (rb - cutoff) / (1.0 - cutoff)), 4)
+        return AnalysisResult(flag="SHARP", score=score, metrics=result.metrics)
+
+    def _analyze_tiles(self, image: PreparedImage, extra: dict[str, float]) -> AnalysisResult:
         s = self.settings
         gray = image.gray
         if s.denoise:
             gray = cv2.GaussianBlur(gray, (3, 3), 0)
         laplacian = cv2.Laplacian(gray, cv2.CV_64F)
         global_variance = float(laplacian.var())
-        scene = scene_metrics(gray, laplacian)
+        scene = {**scene_metrics(gray, laplacian), **extra}
 
         shape = grid_shape(*gray.shape, s.grid_cols)
         if shape is None:

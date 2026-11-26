@@ -46,7 +46,7 @@ def test_every_analyzer_runs_on_every_image(client):
     results = client.post(URL, files=files).json()["results"]
 
     for result in results:
-        assert set(result["analyses"]) == {"blur", "overexposure", "underexposure"}
+        assert set(result["analyses"]) == {"blur", "overexposure", "underexposure", "scene"}
         for analysis in result["analyses"].values():
             assert analysis["status"] == "success"
             assert 0.0 <= analysis["score"] <= 1.0
