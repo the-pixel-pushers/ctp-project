@@ -250,13 +250,35 @@ export function UploadView({ onAnalyzed, overrides }: UploadViewProps) {
                 {stagedFiles.length}
               </span>
             </div>
-            <button
-              onClick={clearAll}
-              disabled={isUploading}
-              className="text-[11px] font-mono text-neutral-600 hover:text-red-400 transition-colors cursor-pointer tracking-wide uppercase disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Clear all
-            </button>
+            <div className="flex items-center gap-4">
+              <p className="text-[11px] font-mono text-neutral-600">
+                {formatSize(totalBytes)} total
+              </p>
+              <button
+                onClick={clearAll}
+                disabled={isUploading}
+                className="text-[11px] font-mono text-neutral-600 hover:text-red-400 transition-colors cursor-pointer tracking-wide uppercase disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Clear all
+              </button>
+              <button
+                onClick={importFiles}
+                disabled={readyCount === 0 || isUploading}
+                className="px-6 py-2.5 rounded-full bg-white text-black text-[13px] font-semibold transition-all duration-300 hover:scale-105 hover:shadow-[0_0_30px_rgba(255,255,255,0.1)] cursor-pointer flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+              >
+                {isUploading ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Analyzing…
+                  </>
+                ) : (
+                  <>
+                    Import {readyCount} file{readyCount !== 1 && 's'}
+                    <ArrowUpRight className="w-3.5 h-3.5" />
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           <div className="grid gap-2">
@@ -313,29 +335,6 @@ export function UploadView({ onAnalyzed, overrides }: UploadViewProps) {
                 </button>
               </div>
             ))}
-          </div>
-
-          <div className="flex items-center justify-between pt-2">
-            <p className="text-[11px] font-mono text-neutral-600">
-              {formatSize(totalBytes)} total
-            </p>
-            <button
-              onClick={importFiles}
-              disabled={readyCount === 0 || isUploading}
-              className="px-6 py-2.5 rounded-full bg-white text-black text-[13px] font-semibold transition-all duration-300 hover:scale-105 hover:shadow-[0_0_30px_rgba(255,255,255,0.1)] cursor-pointer flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
-            >
-              {isUploading ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  Analyzing…
-                </>
-              ) : (
-                <>
-                  Import {readyCount} file{readyCount !== 1 && 's'}
-                  <ArrowUpRight className="w-3.5 h-3.5" />
-                </>
-              )}
-            </button>
           </div>
         </div>
       )}
